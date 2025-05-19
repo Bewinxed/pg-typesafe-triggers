@@ -1,4 +1,4 @@
-// src/index.ts
+// src/index.ts (modified)
 // Main entry point for the library
 import postgres from 'postgres';
 import {
@@ -13,9 +13,15 @@ import { TriggerExecutor } from './define/executor';
 import { TriggerBuilder } from './define/builder';
 import { SubscriptionClient } from './subscribe/client';
 import { getTableName } from './utils/prisma';
+import {
+  NotificationRegistry,
+  NotificationClientBuilder,
+  EnhancedTriggerBuilder
+} from './notification/registry';
 
 // Export types
 export * from './types/core';
+export * from './notification/registry';
 
 // Export trigger definition components
 export { TriggerSQLGenerator } from './define/generator';
@@ -53,15 +59,52 @@ export class PgTypesafeTriggers<Client> {
   }
 
   /**
+   * Creates a notification registry for strongly-typed events
+   *
+   * @returns A new notification registry
+   */
+  public createRegistry(): NotificationRegistry<Client> {
+    return new NotificationRegistry<Client>();
+  }
+
+  /**
+   * Creates a client builder from a notification registry
+   *
+   * @param registry - The notification registry
+   * @returns A notification client builder
+   */
+  public createClient<ChannelMap extends Record<string, any>>(
+    registry: NotificationRegistry<Client, ChannelMap>
+  ): NotificationClientBuilder<Client, ChannelMap> {
+    return new NotificationClientBuilder<Client, ChannelMap>(this, registry);
+  }
+
+  /**
    * Creates a builder for defining a trigger on the given model
    *
    * @param modelName - The model to create a trigger for
+   * @param registry - Optional registry for typed notifications
    * @returns A TriggerBuilder instance
    */
-  public defineTrigger<M extends ModelName<Client>>(
-    modelName: M
-  ): TriggerBuilder<Client, M> {
-    return new TriggerBuilder<Client, M>(this.sql, modelName);
+  public defineTrigger<
+    M extends ModelName<Client>,
+    R extends Record<string, any> = {}
+  >(
+    modelName: M,
+    registry?: NotificationRegistry<Client, R>
+  ): typeof registry extends undefined
+    ? TriggerBuilder<Client, M>
+    : EnhancedTriggerBuilder<Client, M, R> {
+    const baseBuilder = new TriggerBuilder<Client, M>(this.sql, modelName);
+
+    if (registry) {
+      return new EnhancedTriggerBuilder<Client, M, R>(
+        baseBuilder,
+        registry as NotificationRegistry<Client, R>
+      ) as any;
+    }
+
+    return baseBuilder as any;
   }
 
   /**

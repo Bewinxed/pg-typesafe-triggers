@@ -1,4 +1,4 @@
-// tests/utils.ts
+// tests/utils.ts (updated with new waitForNotifications function)
 import { expect } from 'bun:test';
 import { receivedNotifications } from './setup';
 
@@ -14,6 +14,25 @@ export async function waitForNotifications(
 
   while (Date.now() - startTime < timeout) {
     if (receivedNotifications[channel].length >= count) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  return false;
+}
+
+/**
+ * Wait for a condition to be true
+ */
+export async function waitForCondition(
+  condition: () => boolean,
+  timeout: number = 2000
+): Promise<boolean> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    if (condition()) {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));

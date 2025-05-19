@@ -1,4 +1,4 @@
-// src/subscribe/client.ts
+// src/subscribe/client.ts (modified)
 import postgres from 'postgres';
 import { SubscribeOptions } from '../types/core';
 

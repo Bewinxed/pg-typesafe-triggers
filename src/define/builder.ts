@@ -1,4 +1,4 @@
-// src/define/builder.ts
+// src/define/builder.ts (modified)
 import postgres from 'postgres';
 import {
   ModelName,
@@ -15,6 +15,7 @@ import {
   buildWhereCondition
 } from '../utils/condition-builder';
 import { getTableName } from '../utils/prisma';
+import { ChannelConfig } from '../notification/registry';
 
 /**
  * Builder for defining and creating database triggers
@@ -35,7 +36,7 @@ export class TriggerBuilder<Client, M extends ModelName<Client>> {
     this.options.modelName = modelName;
   }
 
-  /**bun test
+  /**
    * Sets the trigger name
    *
    * @param name - The name for the trigger
@@ -155,6 +156,18 @@ export class TriggerBuilder<Client, M extends ModelName<Client>> {
   ): TriggerBuilder<Client, M> {
     this.options.functionName = name;
     this.options.functionArgs = args;
+    return this;
+  }
+
+  /**
+   * Link the trigger to a notification channel (this is for compatibility with the registry)
+   *
+   * @param channel - The channel config
+   * @returns This builder instance for chaining
+   */
+  public notifyOn<T>(channel: ChannelConfig<T>): TriggerBuilder<Client, M> {
+    this.options.functionName =
+      channel.functionName || `${channel.name}_notify_func`;
     return this;
   }
 
