@@ -279,18 +279,13 @@ export class MultiChannelSubscription<
       }
 
       const subscription = this.client.subscribe(String(channelName), {
-        onNotification: (rawPayload: any) => {
+        onNotification: (payload: any) => {
           const handlers = this.handlers.get(channelName);
           if (handlers) {
             try {
-              // Format the notification as a NotificationPayload
-              const formattedPayload = {
-                operation: 'NOTIFY' as const,
-                timestamp: new Date().toISOString(),
-                data: rawPayload // The original payload becomes the data field
-              };
-
-              handlers.forEach((handler) => handler(formattedPayload));
+              // Pass the parsed payload directly to handlers
+              // Instead of reformatting it with operation: 'NOTIFY'
+              handlers.forEach((handler) => handler(payload));
             } catch (error) {
               console.error(
                 `Error processing notification for channel ${String(
@@ -330,18 +325,13 @@ export class MultiChannelSubscription<
     if (this.isSubscribed && !this.subscriptions.get(channelName)) {
       this.client
         .subscribe(String(channelName), {
-          onNotification: (rawPayload: any) => {
+          onNotification: (payload: any) => {
             const handlers = this.handlers.get(channelName);
             if (handlers) {
               try {
-                // Format the notification as a NotificationPayload
-                const formattedPayload = {
-                  operation: 'NOTIFY' as const,
-                  timestamp: new Date().toISOString(),
-                  data: rawPayload // The original payload becomes the data field
-                };
-
-                handlers.forEach((h) => h(formattedPayload));
+                // Pass the parsed payload directly to handlers
+                // Instead of reformatting it with operation: 'NOTIFY'
+                handlers.forEach((h) => h(payload));
               } catch (error) {
                 console.error(
                   `Error processing notification for channel ${String(
