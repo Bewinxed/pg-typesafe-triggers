@@ -1,11 +1,11 @@
 // tests/setup.ts
 import { afterAll, beforeAll } from 'bun:test';
-import { PrismaClient } from '../src/generated/prisma';
 // Import postgres types correctly
 import postgres from 'postgres';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { ListenRequest } from 'postgres';
 import { PgTypesafeTriggers } from '../src';
+import { PrismaClient } from '@prisma/client';
 
 // Global test objects
 export let prisma: PrismaClient | null = null;
@@ -140,8 +140,8 @@ afterAll(async () => {
     }
 
     // Close connections
-    if (prisma) await prisma.$disconnect();
-    if (pgClient) await pgClient.end();
+    // if (prisma) await prisma.$disconnect();
+    // if (pgClient) await pgClient.end();
 
     console.log('Test cleanup complete');
   } catch (error) {

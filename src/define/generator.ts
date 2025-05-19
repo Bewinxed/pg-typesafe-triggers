@@ -14,8 +14,9 @@ export class TriggerSQLGenerator<Client> {
   public generateCreateTriggerSQL<M extends ModelName<Client>>(
     options: DefineTriggerOptions<Client, M>
   ): string {
+    // Extract options including tableName
     const {
-      modelName,
+      tableName,
       triggerName,
       timing,
       events,
@@ -26,14 +27,12 @@ export class TriggerSQLGenerator<Client> {
       functionArgs = []
     } = options;
 
-    // Start building the SQL statement
+    // SQL generation code
     let sql = `CREATE OR REPLACE TRIGGER "${triggerName}"\n`;
     sql += `${timing} `;
-
-    // Add events (e.g., INSERT, UPDATE, DELETE)
     sql += events.join(' OR ') + ' ';
 
-    // Add updateOfColumns for UPDATE events if specified
+    // Add columns if needed
     if (
       events.includes('UPDATE') &&
       updateOfColumns &&
@@ -42,23 +41,17 @@ export class TriggerSQLGenerator<Client> {
       sql += `OF ${updateOfColumns.map((col) => `"${col}"`).join(', ')} `;
     }
 
-    // Add table name - IMPORTANT: Preserve the exact case of the model name
-    sql += `ON "${modelName.slice(0, 1).toUpperCase() + modelName.slice(1)}"\n`;
+    // Use the tableName from options (retrieved from DMMF)
+    sql += `ON "${tableName}"\n`;
 
-    // Add FOR EACH ROW/STATEMENT
+    // Rest of SQL generation
     sql += `FOR EACH ${forEach}\n`;
-
-    // Add WHEN condition if specified
     if (whenCondition) {
       sql += `WHEN (${whenCondition})\n`;
     }
-
-    // Add EXECUTE FUNCTION with arguments
     sql += `EXECUTE FUNCTION ${functionName}(${functionArgs.join(', ')});`;
 
-    // Log the generated SQL for debugging
     console.log('Generated SQL:', sql);
-
     return sql;
   }
 
@@ -69,11 +62,11 @@ export class TriggerSQLGenerator<Client> {
    * @param triggerName - The name of the trigger to drop
    * @returns The SQL string for dropping the trigger
    */
-  public generateDropTriggerSQL<M extends ModelName<Client>>(
-    modelName: M,
+  public generateDropTriggerSQL(
+    tableName: string,
     triggerName: string
   ): string {
-    return `DROP TRIGGER IF EXISTS "${triggerName}" ON "${modelName}";`;
+    return `DROP TRIGGER IF EXISTS "${triggerName}" ON "${tableName}";`;
   }
 
   /**

@@ -1,6 +1,10 @@
 // src/define/executor.ts
 import postgres from 'postgres';
-import { ModelName, DefineTriggerOptions } from '../types/core';
+import {
+  ModelName,
+  DefineTriggerOptions,
+  PrismaClientWithDMMF
+} from '../types/core';
 import { TriggerSQLGenerator } from './generator';
 
 /**
@@ -40,11 +44,11 @@ export class TriggerExecutor<Client> {
    * @param triggerName - The name of the trigger to drop
    * @returns A promise that resolves when the trigger is dropped
    */
-  public async dropTrigger<M extends ModelName<Client>>(
-    modelName: M,
+  public async dropTrigger(
+    tableName: string,
     triggerName: string
   ): Promise<void> {
-    const sql = this.generator.generateDropTriggerSQL(modelName, triggerName);
+    const sql = this.generator.generateDropTriggerSQL(tableName, triggerName);
     await this.sql.unsafe(sql);
   }
 

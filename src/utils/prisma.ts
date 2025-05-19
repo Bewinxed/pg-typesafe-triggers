@@ -1,64 +1,59 @@
 // src/utils/prisma.ts
 import { Prisma } from '@prisma/client';
-import { PrismaModelName } from '../types/core';
 
 /**
- * Utility functions for working with Prisma models and types
+ * Gets the actual database table name for a Prisma model
  */
-export class PrismaUtils {
-  /**
-   * Gets all model names from the Prisma client
-   *
-   * @returns An array of model names
-   */
-  public static getModelNames(): PrismaModelName[] {
-    return Object.values(Prisma.ModelName) as PrismaModelName[];
-  }
+export function getTableName(modelName: string): string {
+  try {
+    // Access datamodel from Prisma's exported DMMF
+    const datamodel = Prisma.dmmf.datamodel;
 
-  /**
-   * Gets all field names for a given model
-   *
-   * @template T - The Prisma model name
-   * @param modelName - The model name to get fields for
-   * @returns An array of field names (as strings)
-   */
-  public static getModelFields<T extends PrismaModelName>(
-    modelName: T
-  ): string[] {
-    // This is a simplified implementation - in a real-world scenario,
-    // you would need to introspect Prisma's generated types more deeply
+    // Find the model by name (case-insensitive)
+    const model = datamodel.models.find(
+      (m) => m.name.toLowerCase() === modelName.toLowerCase()
+    );
 
-    // Example for 'Item' model based on our schema
-    if (modelName === 'Item') {
-      return ['id', 'name', 'status', 'listId'];
+    if (model) {
+      // Return dbName if available, otherwise return the model name
+      return model.dbName || model.name;
     }
+  } catch (error) {
+    console.warn(
+      `Could not get table name for ${modelName}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
 
-    // Example for 'List' model based on our schema
-    if (modelName === 'List') {
-      return ['id', 'name'];
+  // Fallback to first-letter capitalization
+  return modelName.charAt(0).toUpperCase() + modelName.slice(1);
+}
+
+/**
+ * Gets all field names for a given model
+ */
+export function getModelFields(modelName: string): string[] {
+  try {
+    // Access datamodel from Prisma's exported DMMF
+    const datamodel = Prisma.dmmf.datamodel;
+
+    // Find the model by name (case-insensitive)
+    const model = datamodel.models.find(
+      (m) => m.name.toLowerCase() === modelName.toLowerCase()
+    );
+
+    if (model?.fields) {
+      return model.fields.map((f) => f.name);
     }
-
-    return [];
+  } catch (error) {
+    console.warn(
+      `Could not get fields for ${modelName}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
   }
 
-  /**
-   * Checks if a table exists in the database
-   *
-   * @param sql - A postgres.js client instance
-   * @param modelName - The model name to check
-   * @returns A promise that resolves to true if the table exists
-   */
-  public static async tableExists(
-    sql: any,
-    modelName: PrismaModelName
-  ): Promise<boolean> {
-    const result = await sql`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_name = ${modelName.toLowerCase()}
-      );
-    `;
-
-    return result[0]?.exists || false;
-  }
+  // Empty fallback
+  return [];
 }

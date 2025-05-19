@@ -1,6 +1,8 @@
 // src/types/core.ts
 // We avoid importing from @prisma/client directly to allow custom Prisma client implementations
 
+import type { PrismaClient } from '@prisma/client';
+
 /**
  * Timing for when a trigger should fire
  */
@@ -50,6 +52,9 @@ export type ModelField<
 export interface DefineTriggerOptions<Client, M extends ModelName<Client>> {
   /** The Prisma model (table) on which the trigger operates */
   modelName: M;
+
+  /** The actual database table name (retrieved from Prisma) */
+  tableName?: string;
 
   /** A unique name for the trigger */
   triggerName: string;
@@ -107,4 +112,45 @@ export interface SubscribeOptions<T> {
 
   /** Optional error handler */
   onError?: (error: Error, rawPayload?: string) => void;
+}
+
+/**
+ * Type for the Prisma client
+ */
+export type PrismaClientType = PrismaClient;
+
+/**
+ * Type for Prisma DMMF structure we need to access
+ */
+export interface PrismaDMMF {
+  modelMap: Record<string, PrismaModel>;
+}
+
+/**
+ * Type for Prisma model in DMMF
+ */
+export interface PrismaModel {
+  name: string;
+  fields: Record<string, PrismaField>;
+  mappings: {
+    model: string;
+  };
+}
+
+/**
+ * Type for Prisma field in DMMF
+ */
+export interface PrismaField {
+  name: string;
+  type: string;
+  kind: string;
+  isRequired: boolean;
+}
+
+/**
+ * Extended type for PrismaClient that includes internal DMMF property
+ */
+export interface PrismaClientWithDMMF extends PrismaClientType {
+  _baseDmmf?: PrismaDMMF;
+  _dmmf?: PrismaDMMF;
 }

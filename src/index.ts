@@ -5,12 +5,14 @@ import {
   ModelName,
   TriggerOperation,
   TriggerTiming,
-  TriggerForEach
+  TriggerForEach,
+  PrismaClientWithDMMF
 } from './types/core';
 import { TriggerSQLGenerator } from './define/generator';
 import { TriggerExecutor } from './define/executor';
 import { TriggerBuilder } from './define/builder';
 import { SubscriptionClient } from './subscribe/client';
+import { getTableName } from './utils/prisma';
 
 // Export types
 export * from './types/core';
@@ -42,6 +44,7 @@ export class PgTypesafeTriggers<Client> {
    * Creates a new PgTypesafeTriggers instance
    *
    * @param sql - A postgres.js client instance
+   *
    */
   constructor(sql: postgres.Sql) {
     this.sql = sql;
@@ -72,7 +75,11 @@ export class PgTypesafeTriggers<Client> {
     modelName: M,
     triggerName: string
   ): Promise<void> {
-    await this.executor.dropTrigger(modelName, triggerName);
+    // Get the actual table name using the same function as for creation
+    const tableName = getTableName(String(modelName));
+
+    // Pass the resolved table name instead of the model name
+    await this.executor.dropTrigger(tableName, triggerName);
   }
 
   /**

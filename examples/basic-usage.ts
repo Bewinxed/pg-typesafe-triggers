@@ -1,7 +1,8 @@
 // examples/basic-usage.ts
-import { PrismaClient } from '../src/generated/prisma'; // Custom Prisma client path
+
 import postgres from 'postgres';
 import { PgTypesafeTriggers, NotificationPayload } from '../src';
+import { PrismaClient } from '@prisma/client';
 
 // Initialize Prisma client
 const prisma = new PrismaClient();
@@ -11,7 +12,7 @@ const prisma = new PrismaClient();
 const sql = postgres(process.env.DATABASE_URL as string);
 
 // Initialize our trigger library with your specific Prisma client type
-const triggers = new PgTypesafeTriggers<typeof prisma>(sql);
+const triggers = new PgTypesafeTriggers<typeof prisma>(sql, prisma);
 
 // Define the shape of our notification payload
 interface ItemNotification

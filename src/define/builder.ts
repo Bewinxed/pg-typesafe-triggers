@@ -14,6 +14,7 @@ import {
   ConditionBuilder,
   buildWhereCondition
 } from '../utils/condition-builder';
+import { getTableName } from '../utils/prisma';
 
 /**
  * Builder for defining and creating database triggers
@@ -27,13 +28,14 @@ export class TriggerBuilder<Client, M extends ModelName<Client>> {
    *
    * @param sql - A postgres.js client instance
    * @param modelName - The Prisma model (table) name
+   * @param prismaClient - The Prisma client instance
    */
   constructor(sql: postgres.Sql, modelName: M) {
     this.executor = new TriggerExecutor<Client>(sql);
     this.options.modelName = modelName;
   }
 
-  /**
+  /**bun test
    * Sets the trigger name
    *
    * @param name - The name for the trigger
@@ -202,6 +204,11 @@ export class TriggerBuilder<Client, M extends ModelName<Client>> {
     if (!this.options.functionName) {
       throw new Error('Function name is required');
     }
+
+    const tableName = getTableName(String(this.options.modelName));
+
+    // Add the table name to options
+    this.options.tableName = tableName;
 
     // Create the trigger
     await this.executor.createTrigger(
