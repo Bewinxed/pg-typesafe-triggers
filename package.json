@@ -1,0 +1,45 @@
+{
+  "name": "pg-typesafe-triggers",
+  "version": "0.1.0",
+  "description": "A typesafe client for defining and subscribing to PostgreSQL triggers using Prisma",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "example": "ts-node examples/basic-usage.ts",
+    "db:up": "docker-compose up -d",
+    "db:down": "docker-compose down",
+    "db:setup": "prisma db push"
+  },
+  "keywords": [
+    "postgresql",
+    "triggers",
+    "prisma",
+    "typesafe",
+    "listen",
+    "notify"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@prisma/client": "^6.8.2",
+    "@types/pg": "^8.15.2",
+    "pg-testdb": "^1.0.4",
+    "postgres": "^3.4.5",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@prisma/adapter-pg": "^6.8.2",
+    "@types/node": "^22.15.18",
+    "pg": "^8.16.0",
+    "pg-testdb-template": "^1.0.2",
+    "prisma": "^6.8.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "peerDependencies": {
+    "postgres": "^3.0.0"
+  }
+}
