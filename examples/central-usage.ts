@@ -1,7 +1,7 @@
-import postgres from 'postgres';
-import { PgTypesafeTriggers, NotificationPayload } from '../src';
-import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@prisma/client';
+import postgres from 'postgres';
+import { PgTypesafeTriggers } from '../src';
 
 // Initialize Prisma client
 const prisma = new PrismaClient({

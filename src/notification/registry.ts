@@ -279,10 +279,26 @@ export class MultiChannelSubscription<
       }
 
       const subscription = this.client.subscribe(String(channelName), {
-        onNotification: (payload: any) => {
+        onNotification: (rawPayload: any) => {
           const handlers = this.handlers.get(channelName);
           if (handlers) {
-            handlers.forEach((handler) => handler(payload));
+            try {
+              // Format the notification as a NotificationPayload
+              const formattedPayload = {
+                operation: 'NOTIFY' as const,
+                timestamp: new Date().toISOString(),
+                data: rawPayload // The original payload becomes the data field
+              };
+
+              handlers.forEach((handler) => handler(formattedPayload));
+            } catch (error) {
+              console.error(
+                `Error processing notification for channel ${String(
+                  channelName
+                )}:`,
+                error
+              );
+            }
           }
         }
       });
@@ -314,10 +330,26 @@ export class MultiChannelSubscription<
     if (this.isSubscribed && !this.subscriptions.get(channelName)) {
       this.client
         .subscribe(String(channelName), {
-          onNotification: (payload: any) => {
+          onNotification: (rawPayload: any) => {
             const handlers = this.handlers.get(channelName);
             if (handlers) {
-              handlers.forEach((h) => h(payload));
+              try {
+                // Format the notification as a NotificationPayload
+                const formattedPayload = {
+                  operation: 'NOTIFY' as const,
+                  timestamp: new Date().toISOString(),
+                  data: rawPayload // The original payload becomes the data field
+                };
+
+                handlers.forEach((h) => h(formattedPayload));
+              } catch (error) {
+                console.error(
+                  `Error processing notification for channel ${String(
+                    channelName
+                  )}:`,
+                  error
+                );
+              }
             }
           }
         })

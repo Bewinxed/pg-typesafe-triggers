@@ -209,6 +209,7 @@ describe('Notification Registry and Unified Subscription', () => {
       (n) => n.operation === 'DELETE'
     );
 
+    console.log(itemInserts);
     expect(itemInserts.length).toBe(2);
     expect(itemUpdates.length).toBe(1);
     expect(itemDeletes.length).toBe(1);
