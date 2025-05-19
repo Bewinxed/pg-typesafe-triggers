@@ -2,14 +2,28 @@
 import { ModelName, ModelField } from '../types/core';
 
 /**
- * Type for a condition evaluator function
+ * Extract the record type from a Prisma model
+ */
+export type ModelRecord<
+  Client,
+  M extends ModelName<Client>
+> = Client[M] extends {
+  findFirst: (...args: any[]) => Promise<infer Result>;
+}
+  ? Result extends null | undefined
+    ? Record<string, never>
+    : NonNullable<Result>
+  : Record<string, unknown>;
+
+/**
+ * Truly typesafe condition evaluator function
  */
 export type ConditionEvaluator<
   Client,
   M extends ModelName<Client>
 > = (records: {
-  NEW: Record<string, any>;
-  OLD: Record<string, any>;
+  NEW: ModelRecord<Client, M>;
+  OLD: ModelRecord<Client, M>;
 }) => boolean;
 
 /**
@@ -22,7 +36,6 @@ export type ConditionEvaluator<
  * @returns SQL string for the condition
  */
 export function buildWhereCondition<Client, M extends ModelName<Client>>(
-  modelName: M,
   condition: ConditionEvaluator<Client, M>
 ): string {
   // Get the function body as string
@@ -122,10 +135,12 @@ export class ConditionBuilder<Client, M extends ModelName<Client>> {
   /**
    * Creates field different condition
    *
-   * @param field - The field to compare
+   * @param field - The field to compare (with proper typechecking)
    * @returns The condition builder for chaining
    */
-  public fieldChanged(field: string): ConditionBuilder<Client, M> {
+  public fieldChanged(
+    field: ModelField<Client, M>
+  ): ConditionBuilder<Client, M> {
     // For DELETE, this can't work since there's no NEW
     if (this.operation === 'DELETE') {
       throw new Error(

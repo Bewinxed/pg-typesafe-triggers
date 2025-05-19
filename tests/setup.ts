@@ -10,7 +10,7 @@ import { PrismaClient } from '@prisma/client';
 // Global test objects
 export let prisma: PrismaClient | null = null;
 export let pgClient: postgres.Sql | null = null;
-export let triggers: PgTypesafeTriggers<any> | null = null;
+export let triggers: PgTypesafeTriggers<PrismaClient> | null = null;
 
 // Track active listen requests for proper cleanup
 const activeListeners: ListenRequest[] = [];

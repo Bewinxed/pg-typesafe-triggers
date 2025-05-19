@@ -112,10 +112,7 @@ export class TriggerBuilder<Client, M extends ModelName<Client>> {
   public withTypedCondition(
     condition: ConditionEvaluator<Client, M>
   ): TriggerBuilder<Client, M> {
-    this.options.whenCondition = buildWhereCondition<Client, M>(
-      this.options.modelName as M,
-      condition
-    );
+    this.options.whenCondition = buildWhereCondition<Client, M>(condition);
     return this;
   }
 
