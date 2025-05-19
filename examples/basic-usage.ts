@@ -12,7 +12,7 @@ const prisma = new PrismaClient();
 const sql = postgres(process.env.DATABASE_URL as string);
 
 // Initialize our trigger library with your specific Prisma client type
-const triggers = new PgTypesafeTriggers<typeof prisma>(sql, prisma);
+const triggers = new PgTypesafeTriggers<typeof prisma>(sql);
 
 // Define the shape of our notification payload
 interface ItemNotification
