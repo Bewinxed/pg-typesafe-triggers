@@ -1,4 +1,5 @@
 # pg-typesafe-triggers
+
 ![ComfyUI_00006_](https://github.com/user-attachments/assets/8aef8bac-282c-4316-8a59-bc6f17dc5544)
 
 ![TypeScript](https://img.shields.io/badge/typescript-%23007ACC.svg?style=for-the-badge&logo=typescript&logoColor=white)
@@ -47,31 +48,32 @@ const sql = postgres(process.env.DATABASE_URL);
 const triggers = new PgTypesafeTriggers<typeof prisma>(sql);
 
 // Define notification payload type
-interface UserNotification
+interface ItemNotification
   extends NotificationPayload<{
     id: string;
-    email: string;
-    name: string | null;
+    name: string;
+    status: string;
+    listId: string | null;
   }> {}
 
 async function main() {
   // Create a notification function
-  await triggers.createNotifyFunction('user_notify_func', 'user_changes');
+  await triggers.createNotifyFunction('item_notify_func', 'item_changes');
 
   // Define a trigger with full type safety
   await triggers
-    .defineTrigger('user') // Autocompleted and type-checked for YOUR schema
-    .withName('user_email_change_trigger')
+    .defineTrigger('item') // Autocompleted and type-checked for YOUR schema
+    .withName('item_status_change_trigger')
     .withTiming('AFTER')
     .onEvents('UPDATE')
-    .withTypedCondition(({ NEW, OLD }) => NEW.email !== OLD.email) // Type-checked fields
-    .executeFunction('user_notify_func')
+    .withTypedCondition(({ NEW, OLD }) => NEW.status !== OLD.status) // Type-checked fields
+    .executeFunction('item_notify_func')
     .create();
 
   // Subscribe to notifications
   const subscriptionClient = triggers.getSubscriptionClient();
 
-  await subscriptionClient.subscribe<UserNotification>('user_changes', {
+  await subscriptionClient.subscribe<ItemNotification>('item_changes', {
     onNotification: (payload) => {
       console.log(`Received ${payload.operation} notification:`, payload.data);
     }
@@ -102,23 +104,21 @@ async function main() {
   const registry = triggers
     .createRegistry()
     // Define channels with model types (fully type-checked!)
-    .defineChannel('user_changes', 'user')
-    .defineChannel('post_updates', 'post')
-    .channel<'payment_events', { id: string; amount: number; status: string }>(
-      'payment_events'
-    );
+    .defineChannel('item_changes', 'item')
+    .defineChannel('list_updates', 'list')
+    .channel<'uwu_events', { id: string; what: string }>('uwu_events');
 
   // Step 2: Create all the notification functions at once
   await registry.createAllFunctions(triggers);
 
   // Step 3: Define triggers that use these typed channels
   await triggers
-    .defineTrigger('user', registry)
-    .withName('user_status_change_trigger')
+    .defineTrigger('item', registry)
+    .withName('item_status_change_trigger')
     .withTiming('AFTER')
     .onEvents('UPDATE')
     .withTypedCondition(({ NEW, OLD }) => NEW.status !== OLD.status)
-    .notifyOn('user_changes') // Automatically links to the correct function
+    .notifyOn('item_changes') // Automatically links to the correct function
     .create();
 
   // Step 4: Create a unified subscription with event-based interface
@@ -128,16 +128,16 @@ async function main() {
   await subscription.subscribe();
 
   // Add handlers for specific channels
-  subscription.on('user_changes', (payload) => {
-    // Fully typed - payload.data has User type
+  subscription.on('item_changes', (payload) => {
+    // Fully typed - payload.data has Item type
     console.log(
-      `User ${payload.data.id} changed status to ${payload.data.status}`
+      `Item ${payload.data.id} changed status to ${payload.data.status}`
     );
   });
 
-  subscription.on('post_updates', (payload) => {
-    // Fully typed - payload.data has Post type
-    console.log(`Post ${payload.data.id} was ${payload.operation}`);
+  subscription.on('list_updates', (payload) => {
+    // Fully typed - payload.data has List type
+    console.log(`List ${payload.data.id} was ${payload.operation}`);
   });
 }
 
@@ -183,9 +183,9 @@ You can specify when triggers fire and on which events:
 For UPDATE triggers, you can specify which columns to watch:
 
 ```typescript
-// Only fire when email or status columns change
+// Only fire when name or status columns change
 .onEvents('UPDATE')
-.watchColumns('email', 'status') // Type-checked from YOUR schema!
+.watchColumns('name', 'status') // Type-checked from YOUR schema!
 ```
 
 ## Trigger Conditions
@@ -194,16 +194,17 @@ For UPDATE triggers, you can specify which columns to watch:
 
 Write trigger conditions with full TypeScript type safety:
 
+````typescript
 ```typescript
-// 1. Raw SQL (simple but not type-safe)
-.withCondition('NEW.email <> OLD.email')
+// Raw SQL (simple but not type-safe)
+.withCondition('NEW.name <> OLD.name')
 
-// 2. Type-Safe Function (recommended)
-.withTypedCondition(({ NEW, OLD }) => NEW.email !== OLD.email)
+// Type-Safe Function (recommended)
+.withTypedCondition(({ NEW, OLD }) => NEW.name !== OLD.name)
 
-// 3. Condition Builder (for complex conditions)
+// Condition Builder (for complex conditions)
 const condition = triggerBuilder.withConditionBuilder();
-condition.fieldChanged('email'); // Type-checked from YOUR schema!
+condition.fieldChanged('name'); // Type-checked from YOUR schema!
 condition.where('status', '=', 'active'); // Type-checked!
 condition.build(); // Applies AND logic between conditions
 
@@ -212,12 +213,13 @@ const condition = triggerBuilder.withConditionBuilder();
 condition.where('name', '=', 'Test Item');
 condition.where('status', '=', 'special');
 condition.buildOr(); // Applies OR logic between conditions
-```
+````
 
 ### Complex Conditions
 
 For more complex conditions, you can build them programmatically:
 
+````typescript
 ```typescript
 // Complex conditions with field comparisons
 .withTypedCondition(({ OLD, NEW }) =>
@@ -228,19 +230,20 @@ For more complex conditions, you can build them programmatically:
 .withTypedCondition(({ OLD, NEW }) =>
   OLD.status !== NEW.status && NEW.status === 'active'
 )
-```
+````
 
 ## Notification Functions
 
 The library can create notification functions that send payloads to specific channels:
 
+````typescript
 ```typescript
 // Create a notification function
 await triggers.createNotifyFunction(
-  'user_notify_func', // Name of the function to create
-  'user_changes' // Channel name to send notifications on
+  'item_notify_func',   // Name of the function to create
+  'item_changes'        // Channel name to send notifications on
 );
-```
+````
 
 ## Subscribing to Notifications
 
@@ -248,31 +251,33 @@ await triggers.createNotifyFunction(
 
 Subscribe to notifications from a specific channel:
 
+````typescript
 ```typescript
 const client = triggers.getSubscriptionClient();
 
-await client.subscribe<UserNotification>('user_changes', {
+await client.subscribe<ItemNotification>('item_changes', {
   onNotification: (payload) => {
-    console.log(`User ${payload.data.id} was ${payload.operation}`);
+    console.log(`Item ${payload.data.id} was ${payload.operation}`);
     console.log('Updated data:', payload.data);
   },
   onError: (error) => console.error(error)
 });
 
 // Later, unsubscribe:
-await client.unsubscribe('user_changes');
-```
+await client.unsubscribe('item_changes');
+````
 
 ### Centralized Notification Registry
 
 For larger applications, use the registry-based approach for better organization:
 
+````typescript
 ```typescript
 // Create a typed registry
 const registry = triggers
   .createRegistry()
-  .defineChannel('user_changes', 'user')
-  .defineChannel('post_changes', 'post');
+  .defineChannel('item_changes', 'item')
+  .defineChannel('list_changes', 'list');
 
 // Create notification functions for all channels
 await registry.createAllFunctions(triggers);
@@ -281,9 +286,9 @@ await registry.createAllFunctions(triggers);
 const notificationClient = triggers.createClient(registry);
 
 // Option 1: Subscribe to individual channels
-const userChannel = notificationClient.channel('user_changes');
-await userChannel.subscribe((payload) => {
-  console.log(`User ${payload.data.id} updated`);
+const itemChannel = notificationClient.channel('item_changes');
+await itemChannel.subscribe((payload) => {
+  console.log(`Item ${payload.data.id} updated`);
 });
 
 // Option 2: Create a unified subscription
@@ -291,20 +296,20 @@ const subscription = notificationClient.createSubscription();
 await subscription.subscribe(); // Start listening to all channels
 
 // Add handlers with .on()
-subscription.on('user_changes', (payload) => {
-  console.log(`User ${payload.data.id} changed`);
+subscription.on('item_changes', (payload) => {
+  console.log(`Item ${payload.data.id} changed`);
 });
 
-subscription.on('post_changes', (payload) => {
-  console.log(`Post ${payload.data.title} was ${payload.operation}`);
+subscription.on('list_changes', (payload) => {
+  console.log(`List ${payload.data.name} was ${payload.operation}`);
 });
 
 // Remove a specific handler
-subscription.off('user_changes', specificHandler);
+subscription.off('item_changes', specificHandler);
 
 // Unsubscribe from everything
 await subscription.unsubscribeAll();
-```
+````
 
 ## Development
 
