@@ -4,9 +4,47 @@
 import type { PrismaClient } from '@prisma/client';
 
 /**
- * Timing for when a trigger should fire
+ * Timing options for database triggers
  */
-export type TriggerTiming = 'BEFORE' | 'AFTER' | 'INSTEAD OF';
+export const TriggerTiming = {
+  /**
+   * ⏪ BEFORE
+   *
+   * Executes before the database operation happens.
+   *
+   * Example: Validate data or set default values
+   * ```
+   * timing: TriggerTiming.BEFORE // Validates email before INSERT
+   * ```
+   */
+  BEFORE: 'BEFORE',
+
+  /**
+   * ⏩ AFTER
+   *
+   * Executes after the database operation completes.
+   *
+   * Example: Send notifications or update related data
+   * ```
+   * timing: TriggerTiming.AFTER // Send email after INSERT
+   * ```
+   */
+  AFTER: 'AFTER',
+
+  /**
+   * 🔄 INSTEAD OF
+   *
+   * Replaces the operation on a view with custom logic.
+   *
+   * Example: Implement custom INSERT on a complex view
+   * ```
+   * timing: TriggerTiming.INSTEAD_OF // Custom INSERT logic for view
+   * ```
+   */
+  INSTEAD_OF: 'INSTEAD OF'
+} as const;
+
+export type TriggerTiming = (typeof TriggerTiming)[keyof typeof TriggerTiming];
 
 /**
  * Database operations that can trigger a function

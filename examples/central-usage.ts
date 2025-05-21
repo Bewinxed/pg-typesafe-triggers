@@ -1,7 +1,7 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import postgres from 'postgres';
-import { PgTypesafeTriggers } from '../src';
+import { PgTrigger } from '../src';
 
 // Initialize Prisma client
 const prisma = new PrismaClient({
@@ -14,7 +14,7 @@ const sql = postgres(process.env.DATABASE_URL as string);
 
 async function main() {
   // Initialize the triggers library with your Prisma client
-  const triggers = new PgTypesafeTriggers<typeof prisma>(sql);
+  const triggers = new PgTrigger<typeof prisma>(sql);
 
   // Step 1: Create a strongly-typed notification registry with model types
   const registry = triggers

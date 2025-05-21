@@ -1,117 +1,114 @@
-// examples/basic-usage.ts
-
+// examples/flexible-condition-usage.ts
 import postgres from 'postgres';
-import { PgTypesafeTriggers, NotificationPayload } from '../src';
+import { PgTriggerManager, NotificationPayload, TriggerTiming } from '../src';
 import { PrismaClient } from '@prisma/client';
 
-// Initialize Prisma client
+// Initialize clients
 const prisma = new PrismaClient();
-
-// Initialize postgres.js client for low-level operations
-// Note: You may need a separate connection for LISTEN operations
 const sql = postgres(process.env.DATABASE_URL as string);
 
-// Initialize our trigger library with your specific Prisma client type
-const triggers = new PgTypesafeTriggers<typeof prisma>(sql);
+// Initialize trigger manager
+const triggerManager = new PgTriggerManager<typeof prisma>(sql);
 
-// Define the shape of our notification payload
+// Define the notification payload type
 interface ItemNotification
   extends NotificationPayload<{
     id: string;
     name: string;
     status: string;
-    listId: string | null;
   }> {}
 
 async function main() {
   try {
-    // Step 1: Create a notification function
-    await triggers.createNotifyFunction('item_notify_func', 'item_changes');
-    console.log('✅ Created notification function');
+    // Create notification function
+    await triggerManager.createNotifyFunction(
+      'item_notify_func',
+      'item_changes'
+    );
 
-    // Step 2: Define a trigger using the builder pattern with typesafe conditions
-    // The modelName and fields are now typechecked according to YOUR prisma client!
-    await triggers
-      .defineTrigger('item') // Auto-completed and type-checked for your schema
-      .withName('item_status_change_trigger')
-      .withTiming('AFTER')
-      .onEvents('UPDATE')
-      .withTypedCondition(({ NEW, OLD }) => NEW.status !== OLD.status) // Type-checked fields
-      .executeFunction('item_notify_func')
-      .create();
-
-    console.log('✅ Created status change trigger on Item table');
-
-    // Example 2: Using the condition builder for more complex cases
-    const priceIncreaseTrigger = triggers
-      .defineTrigger('item')
-      .withName('item_price_increase_trigger')
-      .withTiming('AFTER')
-      .onEvents('UPDATE');
-
-    const condition = priceIncreaseTrigger.withConditionBuilder();
-    condition.fieldChanged('status'); // Type-checked with auto-completion
-    condition.build();
-
-    await priceIncreaseTrigger.executeFunction('item_notify_func').create();
-
-    console.log('✅ Created price increase trigger on Item table');
-
-    // Step 3: Subscribe to notifications
-    const subscriptionClient = triggers.getSubscriptionClient();
-
-    await subscriptionClient.subscribe<ItemNotification>('item_changes', {
-      onNotification: (payload) => {
-        console.log(`Received ${payload.operation} notification:`);
-        console.log(payload.data);
-      },
-      onError: (error) => console.error('Subscription error:', error)
+    // Example 1: Using a function for the condition
+    const functionTrigger = triggerManager.defineTrigger({
+      modelName: 'item',
+      triggerName: 'function_condition_trigger',
+      timing: 'AFTER',
+      events: ['UPDATE'],
+      // TypeScript function that gets converted to SQL
+      condition: ({ NEW, OLD }) => NEW.status !== OLD.status,
+      functionName: 'item_notify_func'
     });
 
-    console.log('✅ Subscribed to item_changes channel');
+    // Example 2: Using a raw SQL string for the condition
+    const sqlTrigger = triggerManager.defineTrigger({
+      modelName: 'item',
+      triggerName: 'sql_condition_trigger',
+      timing: TriggerTiming.BEFORE,
+      events: ['INSERT'],
+      // Direct SQL condition
+      condition: 'NEW."name" LIKE \'Special%\'',
+      functionName: 'item_notify_func'
+    });
 
-    // Step 4: Make changes to the database to trigger notifications
-    console.log('Creating a new item...');
-    const newItem = await prisma.item.create({
-      data: {
-        name: 'Test Item',
-        status: 'pending'
+    // Example 3: Setting the condition after definition
+    const laterDefinedTrigger = triggerManager.defineTrigger({
+      modelName: 'item',
+      triggerName: 'later_defined_trigger',
+      timing: 'AFTER',
+      events: ['UPDATE'],
+      functionName: 'item_notify_func'
+    });
+
+    // Can set the condition later with either a function or SQL string
+    laterDefinedTrigger.setCondition(({ NEW, OLD }) => NEW.name !== OLD.name);
+    // Could also use: laterDefinedTrigger.setCondition('NEW."name" <> OLD."name"');
+
+    // Create the triggers in the database
+    await functionTrigger.create();
+    await sqlTrigger.create();
+    await laterDefinedTrigger.create();
+
+    // Subscribe to notifications
+    const subscriptionClient = triggerManager.getSubscriptionClient();
+    await subscriptionClient.subscribe<ItemNotification>('item_changes', {
+      onNotification: (payload) => {
+        console.log(
+          `Received ${payload.operation} notification:`,
+          payload.data
+        );
       }
     });
 
-    // Wait a moment for the notification to be processed
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Create an item that should trigger the SQL condition
+    const item = await prisma.item.create({
+      data: { name: 'Special Item', status: 'pending' }
+    });
 
-    console.log('Updating the item...');
+    // Update the status to trigger the function condition
     await prisma.item.update({
-      where: { id: newItem.id },
+      where: { id: item.id },
       data: { status: 'completed' }
     });
 
-    // Wait a moment for the notification to be processed
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    console.log('Deleting the item...');
-    await prisma.item.delete({
-      where: { id: newItem.id }
+    // Update the name to trigger the later defined condition
+    await prisma.item.update({
+      where: { id: item.id },
+      data: { name: 'Renamed Special Item' }
     });
 
-    // Wait for final notification
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Check if triggers exist and drop them
+    console.log(`Function trigger exists: ${await functionTrigger.exists()}`);
+    await functionTrigger.drop();
+    await sqlTrigger.drop();
+    await laterDefinedTrigger.drop();
 
-    // Cleanup: Unsubscribe and drop the trigger
+    // Unsubscribe
     await subscriptionClient.unsubscribe('item_changes');
-    await triggers.dropTrigger('item', 'item_changes_trigger');
-
-    console.log('✅ Cleaned up trigger and subscription');
   } catch (error) {
     console.error('Error:', error);
   } finally {
-    // Close connections
+    // Clean up
     await prisma.$disconnect();
     await sql.end();
   }
 }
 
-// Run the example
 main().catch(console.error);

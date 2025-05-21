@@ -1,13 +1,14 @@
 // src/notification/registry.ts
 import { ModelName, NotificationPayload } from '../types/core';
-import type { PgTypesafeTriggers } from '../index';
 import { ModelRecord } from '../utils/condition-builder';
+import { SubscriptionClient } from '../subscribe/client';
+import { TriggerDefinition } from '../trigger/definition';
 
 type Prettify<T> = {
   [K in keyof T]: T[K];
 } & {};
 
-export interface ChannelConfig<T = any> {
+export interface ChannelConfig<T = unknown> {
   /** The channel name */
   name: string;
   /** The function name for this channel */
@@ -20,7 +21,7 @@ export interface ChannelConfig<T = any> {
  * Registry for notification channels with type safety
  */
 export class NotificationRegistry<
-  Client = any,
+  Client = unknown,
   ChannelMap extends Record<string, ChannelConfig> = {}
 > {
   private channels: ChannelMap;
@@ -36,7 +37,7 @@ export class NotificationRegistry<
    * @param config - Optional configuration for the channel
    * @returns The updated registry with the new channel
    */
-  public channel<Name extends string, Data = any>(
+  public channel<Name extends string, Data = unknown>(
     name: Name,
     config: Partial<
       Omit<ChannelConfig<NotificationPayload<Data>>, 'name' | '_payloadType'>
@@ -108,7 +109,7 @@ export class NotificationRegistry<
    */
   public getChannel<K extends keyof ChannelMap>(
     name: K
-  ): ChannelConfig<ChannelMap[K]> {
+  ): ChannelConfig<ChannelMap[K]['_payloadType']> {
     return this.channels[name];
   }
 
@@ -124,16 +125,19 @@ export class NotificationRegistry<
   /**
    * Creates all notification functions in the database
    *
-   * @param triggers - The PgTypesafeTriggers instance
+   * @param pgTrigger - The PgTrigger instance
    * @returns Promise that resolves when all functions are created
    */
-  public async createAllFunctions(
-    triggers: PgTypesafeTriggers<any>
-  ): Promise<void> {
+  public async createAllFunctions(pgTrigger: {
+    createNotifyFunction: (
+      functionName: string,
+      channelName: string
+    ) => Promise<void>;
+  }): Promise<void> {
     const channelNames = this.getChannelNames();
     for (const name of channelNames) {
       const channel = this.getChannel(name);
-      await triggers.createNotifyFunction(
+      await pgTrigger.createNotifyFunction(
         channel.functionName || `${String(name)}_notify_func`,
         String(name)
       );
@@ -148,6 +152,21 @@ export class NotificationRegistry<
   public getRegistry(): ChannelMap {
     return this.channels;
   }
+
+  /**
+   * Creates a client builder for this registry
+   *
+   * @param pgTrigger - The PgTrigger instance
+   * @returns A notification client builder
+   */
+  public createClientBuilder<T>(pgTrigger: {
+    getSubscriptionClient: () => SubscriptionClient<T>;
+  }): NotificationClientBuilder<T, ChannelMap> {
+    return new NotificationClientBuilder<T, ChannelMap>(
+      pgTrigger.getSubscriptionClient(),
+      this
+    );
+  }
 }
 
 /**
@@ -159,7 +178,7 @@ export class NotificationClientBuilder<
   ChannelMap extends Record<string, ChannelConfig>
 > {
   constructor(
-    private triggers: PgTypesafeTriggers<Client>,
+    private subscriptionClient: SubscriptionClient<Client>,
     private registry: NotificationRegistry<Client, ChannelMap>
   ) {}
 
@@ -172,11 +191,10 @@ export class NotificationClientBuilder<
   public channel<K extends keyof ChannelMap>(
     channelName: K
   ): SubscriptionHandler<Client, NonNullable<ChannelMap[K]['_payloadType']>> {
-    const client = this.triggers.getSubscriptionClient();
     return new SubscriptionHandler<
       Client,
       NonNullable<ChannelMap[K]['_payloadType']>
-    >(client, String(channelName));
+    >(this.subscriptionClient, String(channelName));
   }
 
   /**
@@ -190,11 +208,16 @@ export class NotificationClientBuilder<
       NonNullable<ChannelMap[K]['_payloadType']>
     >;
   } {
-    const handlers = {} as any;
+    const handlers = {} as {
+      [K in keyof ChannelMap]: SubscriptionHandler<
+        Client,
+        NonNullable<ChannelMap[K]['_payloadType']>
+      >;
+    };
     const channelNames = this.registry.getChannelNames();
 
     for (const name of channelNames) {
-      handlers[name] = this.channel(name);
+      handlers[name as keyof typeof handlers] = this.channel(name);
     }
 
     return handlers;
@@ -206,7 +229,7 @@ export class NotificationClientBuilder<
    */
   public createSubscription(): MultiChannelSubscription<Client, ChannelMap> {
     return new MultiChannelSubscription<Client, ChannelMap>(
-      this.triggers.getSubscriptionClient(),
+      this.subscriptionClient,
       this.registry
     );
   }
@@ -217,7 +240,7 @@ export class NotificationClientBuilder<
  */
 export class SubscriptionHandler<Client, T> {
   constructor(
-    private client: any, // The subscription client
+    private client: SubscriptionClient<Client>,
     private channelName: string
   ) {}
 
@@ -230,7 +253,7 @@ export class SubscriptionHandler<Client, T> {
    */
   public async subscribe(
     onNotification: (payload: NonNullable<T>) => void | Promise<void>,
-    options: Omit<any, 'onNotification'> = {}
+    options: Record<string, unknown> = {}
   ): Promise<void> {
     return this.client.subscribe(this.channelName, {
       onNotification,
@@ -248,6 +271,8 @@ export class SubscriptionHandler<Client, T> {
   }
 }
 
+type PayloadHandler<T> = (payload: T) => void | Promise<void>;
+
 /**
  * Multiple channel subscription handler that provides an event-like interface
  */
@@ -256,11 +281,12 @@ export class MultiChannelSubscription<
   ChannelMap extends Record<string, ChannelConfig>
 > {
   private subscriptions: Map<keyof ChannelMap, boolean> = new Map();
-  private handlers: Map<keyof ChannelMap, Set<Function>> = new Map();
+  private handlers: Map<keyof ChannelMap, Set<PayloadHandler<unknown>>> =
+    new Map();
   private isSubscribed = false;
 
   constructor(
-    private client: any, // The subscription client
+    private client: SubscriptionClient<Client>,
     private registry: NotificationRegistry<Client, ChannelMap>
   ) {}
 
@@ -279,12 +305,11 @@ export class MultiChannelSubscription<
       }
 
       const subscription = this.client.subscribe(String(channelName), {
-        onNotification: (payload: any) => {
+        onNotification: (payload: unknown) => {
           const handlers = this.handlers.get(channelName);
           if (handlers) {
             try {
               // Pass the parsed payload directly to handlers
-              // Instead of reformatting it with operation: 'NOTIFY'
               handlers.forEach((handler) => handler(payload));
             } catch (error) {
               console.error(
@@ -311,26 +336,23 @@ export class MultiChannelSubscription<
    */
   public on<K extends keyof ChannelMap>(
     channelName: K,
-    handler: (
-      payload: NonNullable<ChannelMap[K]['_payloadType']>
-    ) => void | Promise<void>
+    handler: PayloadHandler<NonNullable<ChannelMap[K]['_payloadType']>>
   ): this {
     if (!this.handlers.has(channelName)) {
       this.handlers.set(channelName, new Set());
     }
 
-    this.handlers.get(channelName)?.add(handler);
+    this.handlers.get(channelName)?.add(handler as PayloadHandler<unknown>);
 
     // Auto-subscribe if not already subscribed
     if (this.isSubscribed && !this.subscriptions.get(channelName)) {
       this.client
         .subscribe(String(channelName), {
-          onNotification: (payload: any) => {
+          onNotification: (payload: unknown) => {
             const handlers = this.handlers.get(channelName);
             if (handlers) {
               try {
                 // Pass the parsed payload directly to handlers
-                // Instead of reformatting it with operation: 'NOTIFY'
                 handlers.forEach((h) => h(payload));
               } catch (error) {
                 console.error(
@@ -356,13 +378,11 @@ export class MultiChannelSubscription<
    */
   public off<K extends keyof ChannelMap>(
     channelName: K,
-    handler: (
-      payload: NonNullable<ChannelMap[K]['_payloadType']>
-    ) => void | Promise<void>
+    handler: PayloadHandler<NonNullable<ChannelMap[K]['_payloadType']>>
   ): this {
     const handlers = this.handlers.get(channelName);
     if (handlers) {
-      handlers.delete(handler);
+      handlers.delete(handler as PayloadHandler<unknown>);
     }
     return this;
   }
@@ -388,15 +408,15 @@ export class MultiChannelSubscription<
 }
 
 /**
- * Builder for creating trigger definitions that link to notification channels
+ * Extended TriggerDefinition that works with notification channels
  */
-export class EnhancedTriggerBuilder<
+export class EnhancedTriggerDefinition<
   Client,
   M extends ModelName<Client>,
   ChannelMap extends Record<string, ChannelConfig>
 > {
   constructor(
-    private baseBuilder: any, // This will be the original TriggerBuilder
+    private baseTrigger: TriggerDefinition<Client, M>,
     private registry: NotificationRegistry<Client, ChannelMap>
   ) {}
 
@@ -404,60 +424,73 @@ export class EnhancedTriggerBuilder<
    * Link the trigger to a notification channel
    *
    * @param channelName - The registered channel name
-   * @returns The original trigger builder
+   * @returns The trigger definition
    */
-  public notifyOn<K extends keyof ChannelMap>(channelName: K): any {
+  public notifyOn<K extends keyof ChannelMap>(
+    channelName: K
+  ): TriggerDefinition<Client, M> {
     const channel = this.registry.getChannel(channelName);
     const functionName =
       channel.functionName || `${String(channelName)}_notify_func`;
-    return this.baseBuilder.executeFunction(functionName);
+    return this.baseTrigger.executeFunction(functionName);
   }
 
-  // Forward common methods to the base builder
+  // Forward methods to the base trigger
   public withName(name: string): this {
-    this.baseBuilder.withName(name);
+    this.baseTrigger.withName(name);
     return this;
   }
 
   public withTiming(timing: any): this {
-    this.baseBuilder.withTiming(timing);
+    this.baseTrigger.withTiming(timing);
     return this;
   }
 
   public onEvents(...events: any[]): this {
-    this.baseBuilder.onEvents(...events);
+    this.baseTrigger.onEvents(...events);
     return this;
   }
 
   public withForEach(forEach: any): this {
-    this.baseBuilder.withForEach(forEach);
+    this.baseTrigger.withForEach(forEach);
     return this;
   }
 
   public watchColumns(...columns: any[]): this {
-    this.baseBuilder.watchColumns(...columns);
+    this.baseTrigger.watchColumns(...columns);
     return this;
   }
 
-  public withCondition(condition: string): this {
-    this.baseBuilder.withCondition(condition);
+  public rawCondition(condition: string): this {
+    this.baseTrigger.rawCondition(condition);
     return this;
   }
 
-  public withTypedCondition(condition: any): this {
-    this.baseBuilder.withTypedCondition(condition);
+  public withCondition(condition: any): this {
+    this.baseTrigger.withCondition(condition);
     return this;
   }
 
-  public withConditionBuilder(): any {
-    return this.baseBuilder.withConditionBuilder();
+  public conditionBuilder(): any {
+    return this.baseTrigger.conditionBuilder();
   }
 
-  public executeFunction(name: string, ...args: string[]): any {
-    return this.baseBuilder.executeFunction(name, ...args);
+  public executeFunction(
+    name: string,
+    ...args: string[]
+  ): TriggerDefinition<Client, M> {
+    return this.baseTrigger.executeFunction(name, ...args);
   }
 
-  public async create(): Promise<void> {
-    return this.baseBuilder.create();
+  public async create(): Promise<TriggerDefinition<Client, M>> {
+    return this.baseTrigger.create();
+  }
+
+  public async drop(): Promise<void> {
+    return this.baseTrigger.drop();
+  }
+
+  public async exists(): Promise<boolean> {
+    return this.baseTrigger.exists();
   }
 }
