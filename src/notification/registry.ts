@@ -37,7 +37,7 @@ export class NotificationRegistry<
    * @param config - Optional configuration for the channel
    * @returns The updated registry with the new channel
    */
-  public channel<Name extends string, Data = unknown>(
+  public customChannel<Name extends string, Data = unknown>(
     name: Name,
     config: Partial<
       Omit<ChannelConfig<NotificationPayload<Data>>, 'name' | '_payloadType'>
@@ -68,7 +68,7 @@ export class NotificationRegistry<
    * @param name - The channel name
    * @returns The updated registry with the new channel
    */
-  public defineChannel<Name extends string, M extends ModelName<Client>>(
+  public modelChannel<Name extends string, M extends ModelName<Client>>(
     name: Name,
     model: M,
     config: Partial<

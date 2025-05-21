@@ -3,8 +3,12 @@
 
 import type { PrismaClient } from '@prisma/client';
 
+// src/types/core.ts
+
 /**
  * Timing options for database triggers
+ *
+ * @see {@link https://www.postgresql.org/docs/current/sql-createtrigger.html PostgreSQL CREATE TRIGGER}
  */
 export const TriggerTiming = {
   /**
@@ -16,6 +20,8 @@ export const TriggerTiming = {
    * ```
    * timing: TriggerTiming.BEFORE // Validates email before INSERT
    * ```
+   *
+   * @see {@link https://www.postgresql.org/docs/current/trigger-definition.html#TRIGGER-DEFINITION-BEFORE-VS-AFTER PostgreSQL BEFORE Triggers}
    */
   BEFORE: 'BEFORE',
 
@@ -28,6 +34,8 @@ export const TriggerTiming = {
    * ```
    * timing: TriggerTiming.AFTER // Send email after INSERT
    * ```
+   *
+   * @see {@link https://www.postgresql.org/docs/current/trigger-definition.html#TRIGGER-DEFINITION-BEFORE-VS-AFTER PostgreSQL AFTER Triggers}
    */
   AFTER: 'AFTER',
 
@@ -40,6 +48,8 @@ export const TriggerTiming = {
    * ```
    * timing: TriggerTiming.INSTEAD_OF // Custom INSERT logic for view
    * ```
+   *
+   * @see {@link https://www.postgresql.org/docs/current/sql-createtrigger.html#SQL-CREATETRIGGER-INSTEAD PostgreSQL INSTEAD OF Triggers}
    */
   INSTEAD_OF: 'INSTEAD OF'
 } as const;
@@ -48,13 +58,279 @@ export type TriggerTiming = (typeof TriggerTiming)[keyof typeof TriggerTiming];
 
 /**
  * Database operations that can trigger a function
+ *
+ * @see {@link https://www.postgresql.org/docs/current/sql-createtrigger.html#SQL-CREATETRIGGER-EVENTS PostgreSQL Trigger Events}
  */
-export type TriggerOperation = 'INSERT' | 'UPDATE' | 'DELETE' | 'TRUNCATE';
+export const TriggerOperation = {
+  /**
+   * ➕ INSERT
+   *
+   * Fires when new rows are added to the table.
+   *
+   * Example: Send welcome email when new user is created
+   * ```
+   * events: [TriggerOperation.INSERT] // Notify when new records are created
+   * ```
+   *
+   * @see {@link https://www.postgresql.org/docs/current/sql-createtrigger.html#SQL-CREATETRIGGER-INSERT PostgreSQL INSERT Triggers}
+   */
+  INSERT: 'INSERT',
+
+  /**
+   * 🔄 UPDATE
+   *
+   * Fires when existing rows are modified.
+   *
+   * Example: Track status changes or update timestamps
+   * ```
+   * events: [TriggerOperation.UPDATE] // Log when records are modified
+   * ```
+   *
+   * @see {@link https://www.postgresql.org/docs/current/sql-createtrigger.html#SQL-CREATETRIGGER-UPDATE PostgreSQL UPDATE Triggers}
+   */
+  UPDATE: 'UPDATE',
+
+  /**
+   * ❌ DELETE
+   *
+   * Fires when rows are removed from the table.
+   *
+   * Example: Clean up related data or create audit logs
+   * ```
+   * events: [TriggerOperation.DELETE] // Archive data before deletion
+   * ```
+   *
+   * @see {@link https://www.postgresql.org/docs/current/sql-createtrigger.html#SQL-CREATETRIGGER-DELETE PostgreSQL DELETE Triggers}
+   */
+  DELETE: 'DELETE',
+
+  /**
+   * 🧹 TRUNCATE
+   *
+   * Fires when the table is truncated (all rows removed at once).
+   *
+   * Example: Reset dependent counters or notify system administrators
+   * ```
+   * events: [TriggerOperation.TRUNCATE] // Log table truncation events
+   * ```
+   *
+   * @see {@link https://www.postgresql.org/docs/current/sql-createtrigger.html#SQL-CREATETRIGGER-TRUNCATE PostgreSQL TRUNCATE Triggers}
+   */
+  TRUNCATE: 'TRUNCATE'
+} as const;
+
+export type TriggerOperation =
+  (typeof TriggerOperation)[keyof typeof TriggerOperation];
 
 /**
  * Whether the trigger function runs once per row or once per statement
+ *
+ * @see {@link https://www.postgresql.org/docs/current/sql-createtrigger.html#SQL-CREATETRIGGER-FOREACH PostgreSQL FOR EACH}
  */
-export type TriggerForEach = 'ROW' | 'STATEMENT';
+export const TriggerForEach = {
+  /**
+   * 🔢 ROW
+   *
+   * Executes the trigger function once for each row affected by the operation.
+   *
+   * Example: Process individual records with detailed logic
+   * ```
+   * forEach: TriggerForEach.ROW // Apply business logic to each affected row
+   * ```
+   *
+   * @see {@link https://www.postgresql.org/docs/current/trigger-definition.html#TRIGGER-ROW-VS-STATEMENT PostgreSQL ROW Triggers}
+   */
+  ROW: 'ROW',
+
+  /**
+   * 📑 STATEMENT
+   *
+   * Executes the trigger function once for the entire SQL statement.
+   *
+   * Example: Perform batch operations or send a single notification
+   * ```
+   * forEach: TriggerForEach.STATEMENT // Send one notification regardless of row count
+   * ```
+   *
+   * @see {@link https://www.postgresql.org/docs/current/trigger-definition.html#TRIGGER-ROW-VS-STATEMENT PostgreSQL STATEMENT Triggers}
+   */
+  STATEMENT: 'STATEMENT'
+} as const;
+
+export type TriggerForEach =
+  (typeof TriggerForEach)[keyof typeof TriggerForEach];
+
+/**
+ * Comparison operators for conditions in PostgreSQL
+ *
+ * @see {@link https://www.postgresql.org/docs/current/functions-comparison.html PostgreSQL Comparison Operators}
+ */
+export const ComparisonOperator = {
+  /**
+   * ✓ EQUALS
+   *
+   * Checks if values are equal.
+   *
+   * Example: Match records with exact field value
+   * ```
+   * condition.where('status', ComparisonOperator.EQUALS, 'active')
+   * ```
+   *
+   * @see {@link https://www.postgresql.org/docs/current/functions-comparison.html#FUNCTIONS-COMPARISON-OP-TABLE PostgreSQL = Operator}
+   */
+  EQUALS: '=',
+
+  /**
+   * ≠ NOT_EQUALS
+   *
+   * Checks if values are not equal.
+   *
+   * Example: Find all non-default records
+   * ```
+   * condition.where('status', ComparisonOperator.NOT_EQUALS, 'pending')
+   * ```
+   */
+  NOT_EQUALS: '<>',
+
+  /**
+   * > GREATER_THAN
+   *
+   * Checks if left value is greater than right value.
+   *
+   * Example: Find high-value orders
+   * ```
+   * condition.where('amount', ComparisonOperator.GREATER_THAN, 1000)
+   * ```
+   */
+  GREATER_THAN: '>',
+
+  /**
+   * ≥ GREATER_THAN_EQUALS
+   *
+   * Checks if left value is greater than or equal to right value.
+   *
+   * Example: Find orders meeting minimum threshold
+   * ```
+   * condition.where('amount', ComparisonOperator.GREATER_THAN_EQUALS, 100)
+   * ```
+   */
+  GREATER_THAN_EQUALS: '>=',
+
+  /**
+   * < LESS_THAN
+   *
+   * Checks if left value is less than right value.
+   *
+   * Example: Find low-stock items
+   * ```
+   * condition.where('quantity', ComparisonOperator.LESS_THAN, 10)
+   * ```
+   */
+  LESS_THAN: '<',
+
+  /**
+   * ≤ LESS_THAN_EQUALS
+   *
+   * Checks if left value is less than or equal to right value.
+   *
+   * Example: Find items at or below threshold
+   * ```
+   * condition.where('quantity', ComparisonOperator.LESS_THAN_EQUALS, 5)
+   * ```
+   */
+  LESS_THAN_EQUALS: '<=',
+
+  /**
+   * 🔍 LIKE
+   *
+   * Pattern matching with wildcards (% for any sequence, _ for single character).
+   *
+   * Example: Find names starting with specific prefix
+   * ```
+   * condition.where('name', ComparisonOperator.LIKE, 'John%')
+   * ```
+   */
+  LIKE: 'LIKE',
+
+  /**
+   * 🚫 NOT_LIKE
+   *
+   * Negated pattern matching with wildcards.
+   *
+   * Example: Exclude names with specific pattern
+   * ```
+   * condition.where('name', ComparisonOperator.NOT_LIKE, '%test%')
+   * ```
+   */
+  NOT_LIKE: 'NOT LIKE',
+
+  /**
+   * 📋 IN
+   *
+   * Checks if value is in a list of values.
+   *
+   * Example: Match records with specific status values
+   * ```
+   * condition.where('status', ComparisonOperator.IN, ['active', 'pending'])
+   * ```
+   */
+  IN: 'IN',
+
+  /**
+   * ⛔ NOT_IN
+   *
+   * Checks if value is not in a list of values.
+   *
+   * Example: Exclude specific categories
+   * ```
+   * condition.where('category', ComparisonOperator.NOT_IN, ['test', 'demo'])
+   * ```
+   */
+  NOT_IN: 'NOT IN'
+} as const;
+
+export type ComparisonOperator =
+  (typeof ComparisonOperator)[keyof typeof ComparisonOperator];
+
+/**
+ * Logical operators for combining conditions in PostgreSQL
+ *
+ * @see {@link https://www.postgresql.org/docs/current/functions-logical.html PostgreSQL Logical Operators}
+ */
+export const LogicalOperator = {
+  /**
+   * 🔗 AND
+   *
+   * Combines conditions with logical AND (all conditions must be true).
+   *
+   * Example: Find active premium users
+   * ```
+   * // status = 'active' AND plan = 'premium'
+   * condition.buildWithLogic(LogicalOperator.AND)
+   * ```
+   *
+   * @see {@link https://www.postgresql.org/docs/current/functions-logical.html#FUNCTIONS-LOGICAL-OPERATOR-TABLE PostgreSQL AND Operator}
+   */
+  AND: 'AND',
+
+  /**
+   * 🔀 OR
+   *
+   * Combines conditions with logical OR (at least one condition must be true).
+   *
+   * Example: Find users that are either premium or have been active recently
+   * ```
+   * // plan = 'premium' OR last_active > '2023-01-01'
+   * condition.buildWithLogic(LogicalOperator.OR)
+   * ```
+   *
+   * @see {@link https://www.postgresql.org/docs/current/functions-logical.html#FUNCTIONS-LOGICAL-OPERATOR-TABLE PostgreSQL OR Operator}
+   */
+  OR: 'OR'
+} as const;
+
+export type LogicalOperator =
+  (typeof LogicalOperator)[keyof typeof LogicalOperator];
 
 /**
  * Generic type for extracting table/model names from a Prisma client type

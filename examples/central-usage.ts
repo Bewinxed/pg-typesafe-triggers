@@ -1,7 +1,13 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import postgres from 'postgres';
-import { PgTrigger } from '../src';
+import {
+  PgTriggerManager,
+  TriggerTiming,
+  TriggerOperation,
+  TriggerForEach,
+  NotificationPayload
+} from '../src';
 
 // Initialize Prisma client
 const prisma = new PrismaClient({
@@ -9,42 +15,59 @@ const prisma = new PrismaClient({
 });
 
 // Initialize postgres.js client for low-level operations
-// Note: You may need a separate connection for LISTEN operations
 const sql = postgres(process.env.DATABASE_URL as string);
 
 async function main() {
   // Initialize the triggers library with your Prisma client
-  const triggers = new PgTrigger<typeof prisma>(sql);
+  const triggers = new PgTriggerManager<typeof prisma>(sql);
 
   // Step 1: Create a strongly-typed notification registry with model types
   const registry = triggers
     .createRegistry()
     // Define channels with model types (fully type-checked!)
-    .defineChannel('item_changes', 'item')
-    .defineChannel('list_updates', 'list')
-    .channel<'payment_events', { id: string; amount: number; status: string }>(
-      'payment_events'
-    );
+    .modelChannel('item_changes', 'item')
+    .modelChannel('list_updates', 'list')
+    .customChannel<
+      'payment_events',
+      { id: string; amount: number; status: string }
+    >('payment_events');
 
   // Step 2: Create all the notification functions at once
   await registry.createAllFunctions(triggers);
 
-  // Step 3: Define triggers that use these typed channels
+  // Step 3: Define triggers using the object-based approach
   await triggers
-    .defineTrigger('item', registry)
-    .withName('item_status_change_trigger')
-    .withTiming('AFTER')
-    .onEvents('UPDATE')
-    .withTypedCondition(({ NEW, OLD }) => NEW.status !== OLD.status)
-    .notifyOn('item_changes')
+    .defineTrigger({
+      modelName: 'item',
+      triggerName: 'item_status_change_trigger',
+      timing: TriggerTiming.AFTER,
+      events: [TriggerOperation.UPDATE],
+      forEach: TriggerForEach.ROW,
+      condition: ({ NEW, OLD }) => NEW.status !== OLD.status,
+      // Use the function name that the registry created
+      functionName: 'item_changes_notify_func'
+    })
+    .create();
+
+  // Alternative approach for different models
+  await triggers
+    .defineTrigger({
+      modelName: 'list',
+      triggerName: 'list_update_trigger',
+      timing: TriggerTiming.AFTER,
+      events: [TriggerOperation.UPDATE, TriggerOperation.INSERT],
+      // Use the function name that the registry created
+      functionName: 'list_updates_notify_func'
+    })
     .create();
 
   // Create the notification client
   const notificationClient = triggers.createClient(registry);
 
-  // Option 1: Subscribe to individual channels
+  // Option 1: Subscribe to individual channels with type safety
   const itemChannel = notificationClient.channel('item_changes');
   await itemChannel.subscribe((payload) => {
+    // payload is fully typed based on the 'item' model
     console.log(`Item ${payload.data.id} updated`);
   });
 
@@ -57,12 +80,12 @@ async function main() {
   // Add handlers for specific channels with .on()
   subscription.on('item_changes', (payload) => {
     // Fully typed - payload.data has Item type
-    console.log(`Item ${payload.data.id} changed`);
+    console.log(`Item ${payload.data.id} changed to ${payload.data.status}`);
   });
 
   subscription.on('list_updates', (payload) => {
     // Fully typed - payload.data has list type
-    console.log(`list ${payload.data.id} was ${payload.operation}`);
+    console.log(`List ${payload.data.id} was ${payload.operation}`);
   });
 
   subscription.on('payment_events', (payload) => {
@@ -76,7 +99,7 @@ async function main() {
   });
 
   // Later, remove a specific handler
-  const handler = (payload: any) => console.log(payload);
+  const handler = (payload: NotificationPayload<any>) => console.log(payload);
   subscription.on('item_changes', handler);
   subscription.off('item_changes', handler);
 
@@ -84,4 +107,4 @@ async function main() {
   await subscription.unsubscribeAll();
 }
 
-await main().catch(console.error);
+main().catch(console.error);

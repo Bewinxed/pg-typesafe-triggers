@@ -104,8 +104,8 @@ async function main() {
   const registry = triggers
     .createRegistry()
     // Define channels with model types (fully type-checked!)
-    .defineChannel('item_changes', 'item')
-    .defineChannel('list_updates', 'list')
+    .modelChannel('item_changes', 'item')
+    .modelChannel('list_updates', 'list')
     .channel<'uwu_events', { id: string; what: string }>('uwu_events');
 
   // Step 2: Create all the notification functions at once
@@ -276,8 +276,8 @@ For larger applications, use the registry-based approach for better organization
 // Create a typed registry
 const registry = triggers
   .createRegistry()
-  .defineChannel('item_changes', 'item')
-  .defineChannel('list_changes', 'list');
+  .modelChannel('item_changes', 'item')
+  .modelChannel('list_changes', 'list');
 
 // Create notification functions for all channels
 await registry.createAllFunctions(triggers);
@@ -286,7 +286,7 @@ await registry.createAllFunctions(triggers);
 const notificationClient = triggers.createClient(registry);
 
 // Option 1: Subscribe to individual channels
-const itemChannel = notificationClient.channel('item_changes');
+const itemChannel = notificationClient.modelChannel'item_changes');
 await itemChannel.subscribe((payload) => {
   console.log(`Item ${payload.data.id} updated`);
 });

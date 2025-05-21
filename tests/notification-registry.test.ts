@@ -51,9 +51,9 @@ describe('Notification Registry and Unified Subscription', () => {
     // Create a registry with channels for all three models
     const registry = triggers!
       .createRegistry()
-      .defineChannel('item_events', 'item')
-      .defineChannel('list_events', 'list')
-      .defineChannel('uwu_events', 'uwU');
+      .modelChannel('item_events', 'item')
+      .modelChannel('list_events', 'list')
+      .modelChannel('uwu_events', 'uwU');
 
     // Create notification functions
     await registry.createAllFunctions(triggers!);
@@ -295,8 +295,8 @@ describe('Notification Registry and Unified Subscription', () => {
     // Create a registry with different channel names to avoid subscription conflicts
     const registry = triggers!
       .createRegistry()
-      .defineChannel('item_events_2', 'item')
-      .defineChannel('list_events_2', 'list');
+      .modelChannel('item_events_2', 'item')
+      .modelChannel('list_events_2', 'list');
 
     // Create notification functions
     await registry.createAllFunctions(triggers!);
@@ -326,8 +326,8 @@ describe('Notification Registry and Unified Subscription', () => {
     receivedNotifications['list_events_2'] = [];
 
     // Subscribe to individual channels
-    const itemChannel = client.channel('item_events_2');
-    const listChannel = client.channel('list_events_2');
+    const itemChannel = client.modelChannel'item_events_2');
+    const listChannel = client.modelChannel'list_events_2');
 
     // Set up handlers
     await itemChannel.subscribe((payload) => {

@@ -1,6 +1,11 @@
 // examples/flexible-condition-usage.ts
 import postgres from 'postgres';
-import { PgTriggerManager, NotificationPayload, TriggerTiming } from '../src';
+import {
+  PgTriggerManager,
+  NotificationPayload,
+  TriggerTiming,
+  TriggerOperation
+} from '../src';
 import { PrismaClient } from '@prisma/client';
 
 // Initialize clients
@@ -42,7 +47,7 @@ async function main() {
       modelName: 'item',
       triggerName: 'sql_condition_trigger',
       timing: TriggerTiming.BEFORE,
-      events: ['INSERT'],
+      events: [TriggerOperation.UPDATE],
       // Direct SQL condition
       condition: 'NEW."name" LIKE \'Special%\'',
       functionName: 'item_notify_func'
