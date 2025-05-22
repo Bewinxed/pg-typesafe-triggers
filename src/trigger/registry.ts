@@ -1,4 +1,4 @@
-// src/registry.ts
+// src/trigger/registry.ts (fixed with proper typing)
 import postgres from 'postgres';
 import {
   ModelName,
@@ -34,10 +34,50 @@ export interface ChannelConfig<T = any> {
   _payloadType?: T;
 }
 
+// Type mapping for channels to their payload types - simplified to avoid Record<string, never> unions
+type ChannelTypeMap<
+  Client,
+  TModels extends ModelName<Client> = never,
+  TCustomChannels extends Record<string, any> = {},
+  TCustomTriggers extends Record<string, ModelName<Client>> = {}
+> = {
+  // Model channels - use the Prisma client's model types directly
+  [K in TModels]: NotificationPayload<
+    Client[K] extends { findFirst: (...args: any[]) => Promise<infer Result> }
+      ? NonNullable<Result>
+      : any
+  >;
+} & {
+  // Custom channels with their defined schemas
+  [K in keyof TCustomChannels]: NotificationPayload<TCustomChannels[K]>;
+} & {
+  // Custom triggers that use model data
+  [K in keyof TCustomTriggers]: NotificationPayload<
+    Client[TCustomTriggers[K]] extends {
+      findFirst: (...args: any[]) => Promise<infer Result>;
+    }
+      ? NonNullable<Result>
+      : any
+  >;
+};
+
+// Union of all available channel names
+type AllChannelNames<
+  Client,
+  TModels extends ModelName<Client>,
+  TCustomChannels extends Record<string, any>,
+  TCustomTriggers extends Record<string, ModelName<Client>>
+> = TModels | keyof TCustomChannels | keyof TCustomTriggers;
+
 /**
  * Centralized registry for managing multiple triggers and channels
  */
-export class Registry<Client> {
+export class Registry<
+  Client,
+  TModels extends ModelName<Client> = never,
+  TCustomChannels extends Record<string, any> = {},
+  TCustomTriggers extends Record<string, ModelName<Client>> = {}
+> {
   private sql: postgres.Sql;
   private executor: TriggerExecutor<Client>;
   private subscriptionClient: SubscriptionClient<Client>;
@@ -65,35 +105,44 @@ export class Registry<Client> {
   /**
    * Add basic model channels with default triggers
    */
-  models<M extends ModelName<Client>>(...modelNames: M[]): this {
+  models<M extends ModelName<Client>>(
+    ...modelNames: M[]
+  ): Registry<Client, TModels | M, TCustomChannels, TCustomTriggers> {
     modelNames.forEach((modelName) => {
       const channelName = `${String(modelName)}_events`;
       this.modelChannels.set(modelName, channelName);
     });
-    return this;
+    return this as any;
   }
 
   /**
    * Add a custom channel with schema
    */
-  custom<T = any>(
-    name: string,
+  custom<TName extends string, T = any>(
+    name: TName,
     schema?: T,
     config?: Partial<CustomChannelConfig<T>>
-  ): this {
+  ): Registry<
+    Client,
+    TModels,
+    TCustomChannels & Record<TName, T>,
+    TCustomTriggers
+  > {
     this.customChannels.set(name, {
       name,
       schema,
       functionName: config?.functionName || `${name}_notify_func`,
       ...config
     });
-    return this;
+    return this as any;
   }
 
   /**
    * Set current model context for fluent API
    */
-  model<M extends ModelName<Client>>(modelName: M): ModelBuilder<Client, M> {
+  model<M extends ModelName<Client>>(
+    modelName: M
+  ): ModelBuilder<Client, M, TModels, TCustomChannels, TCustomTriggers> {
     this.currentModel = modelName;
 
     // Ensure the model has a channel
@@ -102,7 +151,13 @@ export class Registry<Client> {
       this.modelChannels.set(modelName, channelName);
     }
 
-    return new ModelBuilder<Client, M>(this, modelName);
+    return new ModelBuilder<
+      Client,
+      M,
+      TModels,
+      TCustomChannels,
+      TCustomTriggers
+    >(this, modelName);
   }
 
   /**
@@ -169,7 +224,7 @@ export class Registry<Client> {
       if (triggerName.includes('_custom_')) {
         // This is a custom trigger, create it
         const [modelName, , triggerShortName] = triggerName.split('_');
-        const channelName = `${triggerShortName}_events`;
+        const channelName = triggerShortName;
 
         // Create function for this custom trigger
         const functionName = `${channelName}_notify_func`;
@@ -244,7 +299,7 @@ export class Registry<Client> {
     for (const [triggerName] of this.modelTriggers) {
       if (triggerName.includes('_custom_')) {
         const [, , triggerShortName] = triggerName.split('_');
-        const channelName = `${triggerShortName}_events`;
+        const channelName = triggerShortName;
         if (!subscribedChannels.has(channelName)) {
           await this.subscriptionClient.subscribe(channelName, {
             onNotification: (payload: any) => {
@@ -284,7 +339,7 @@ export class Registry<Client> {
     for (const [triggerName] of this.modelTriggers) {
       if (triggerName.includes('_custom_')) {
         const [, , triggerShortName] = triggerName.split('_');
-        const channelName = `${triggerShortName}_events`;
+        const channelName = triggerShortName;
         await this.subscriptionClient.unsubscribe(channelName);
       }
     }
@@ -306,22 +361,40 @@ export class Registry<Client> {
   }
 
   /**
-   * Add a handler for a model channel
+   * Add a handler for a specific channel with proper typing
    */
-  on<M extends ModelName<Client>>(
-    modelOrChannel: M | string,
-    handler: NotificationHandler<NotificationPayload<ModelRecord<Client, M>>>
+  on<
+    TChannel extends AllChannelNames<
+      Client,
+      TModels,
+      TCustomChannels,
+      TCustomTriggers
+    >
+  >(
+    channel: TChannel,
+    handler: NotificationHandler<
+      ChannelTypeMap<
+        Client,
+        TModels,
+        TCustomChannels,
+        TCustomTriggers
+      >[TChannel]
+    >
   ): void {
     let channelName: string;
 
-    // Check if it's a model name or custom channel
-    if (this.modelChannels.has(modelOrChannel as M)) {
-      channelName = this.modelChannels.get(modelOrChannel as M)!;
-    } else if (this.customChannels.has(modelOrChannel as string)) {
-      channelName = modelOrChannel as string;
+    // For model names, use their channel mapping
+    const isModelName = Array.from(this.modelChannels.keys()).includes(
+      channel as ModelName<Client>
+    );
+    if (isModelName) {
+      channelName = this.modelChannels.get(channel as ModelName<Client>)!;
+    } else if (this.customChannels.has(channel as string)) {
+      // It's a custom channel
+      channelName = channel as string;
     } else {
-      // Check if it's a custom trigger channel
-      channelName = modelOrChannel as string;
+      // It might be a custom trigger channel
+      channelName = channel as string;
     }
 
     if (!this.handlers.has(channelName)) {
@@ -333,16 +406,33 @@ export class Registry<Client> {
   /**
    * Remove a handler for a channel
    */
-  off<M extends ModelName<Client>>(
-    modelOrChannel: M | string,
-    handler: NotificationHandler<NotificationPayload<ModelRecord<Client, M>>>
+  off<
+    TChannel extends AllChannelNames<
+      Client,
+      TModels,
+      TCustomChannels,
+      TCustomTriggers
+    >
+  >(
+    channel: TChannel,
+    handler: NotificationHandler<
+      ChannelTypeMap<
+        Client,
+        TModels,
+        TCustomChannels,
+        TCustomTriggers
+      >[TChannel]
+    >
   ): void {
     let channelName: string;
 
-    if (this.modelChannels.has(modelOrChannel as M)) {
-      channelName = this.modelChannels.get(modelOrChannel as M)!;
+    const isModelName = Array.from(this.modelChannels.keys()).includes(
+      channel as ModelName<Client>
+    );
+    if (isModelName) {
+      channelName = this.modelChannels.get(channel as ModelName<Client>)!;
     } else {
-      channelName = modelOrChannel as string;
+      channelName = channel as string;
     }
 
     const handlers = this.handlers.get(channelName);
@@ -399,22 +489,46 @@ export class Registry<Client> {
 /**
  * Fluent builder for model-specific configuration
  */
-export class ModelBuilder<Client, M extends ModelName<Client>> {
-  constructor(private registry: Registry<Client>, private modelName: M) {}
+export class ModelBuilder<
+  Client,
+  M extends ModelName<Client>,
+  TModels extends ModelName<Client>,
+  TCustomChannels extends Record<string, any>,
+  TCustomTriggers extends Record<string, ModelName<Client>>
+> {
+  constructor(
+    private registry: Registry<
+      Client,
+      TModels,
+      TCustomChannels,
+      TCustomTriggers
+    >,
+    private modelName: M
+  ) {}
 
   /**
    * Add a custom trigger for this model
    */
-  trigger(name: string, config: TriggerConfig<Client, M>): Registry<Client> {
+  trigger<TName extends string>(
+    name: TName,
+    config: TriggerConfig<Client, M>
+  ): Registry<
+    Client,
+    TModels,
+    TCustomChannels,
+    TCustomTriggers & Record<TName, M>
+  > {
     const key = `${String(this.modelName)}_custom_${name}`;
     this.registry.internal.addModelTrigger(key, config);
-    return this.registry;
+    return this.registry as any;
   }
 
   /**
    * Configure the default trigger for this model
    */
-  onEvents(...events: TriggerOperation[]): Registry<Client> {
+  onEvents(
+    ...events: TriggerOperation[]
+  ): Registry<Client, TModels, TCustomChannels, TCustomTriggers> {
     const key = `${String(this.modelName)}_default`;
     const existing = this.registry.internal.getModelTrigger(key);
     this.registry.internal.addModelTrigger(key, {
@@ -427,7 +541,9 @@ export class ModelBuilder<Client, M extends ModelName<Client>> {
   /**
    * Add condition to the default trigger
    */
-  when(condition: ConditionEvaluator<Client, M> | string): Registry<Client> {
+  when(
+    condition: ConditionEvaluator<Client, M> | string
+  ): Registry<Client, TModels, TCustomChannels, TCustomTriggers> {
     const key = `${String(this.modelName)}_default`;
     const existing = this.registry.internal.getModelTrigger(key);
     this.registry.internal.addModelTrigger(key, {

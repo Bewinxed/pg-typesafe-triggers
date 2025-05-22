@@ -1,110 +1,121 @@
-import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import postgres from 'postgres';
-import {
-  PgTriggerManager,
-  TriggerTiming,
-  TriggerOperation,
-  TriggerForEach,
-  NotificationPayload
-} from '../src';
+import { Registry } from '../src/trigger/registry';
 
-// Initialize Prisma client
-const prisma = new PrismaClient({
-  adapter: new PrismaPg({})
-});
-
-// Initialize postgres.js client for low-level operations
-const sql = postgres(process.env.DATABASE_URL as string);
+// Initialize clients
+const prisma = new PrismaClient();
+const sql = postgres(process.env.DATABASE_URL!);
 
 async function main() {
-  // Initialize the triggers library with your Prisma client
-  const triggers = new PgTriggerManager<typeof prisma>(sql);
-
-  // Step 1: Create a strongly-typed notification registry with model types
-  const registry = triggers
-    .createRegistry()
-    // Define channels with model types (fully type-checked!)
-    .modelChannel('item_changes', 'item')
-    .modelChannel('list_updates', 'list')
-    .customChannel<
-      'payment_events',
-      { id: string; amount: number; status: string }
-    >('payment_events');
-
-  // Step 2: Create all the notification functions at once
-  await registry.createAllFunctions(triggers);
-
-  // Step 3: Define triggers using the object-based approach
-  await triggers
-    .defineTrigger({
-      modelName: 'item',
-      triggerName: 'item_status_change_trigger',
-      timing: TriggerTiming.AFTER,
-      events: [TriggerOperation.UPDATE],
-      forEach: TriggerForEach.ROW,
-      condition: ({ NEW, OLD }) => NEW.status !== OLD.status,
-      // Use the function name that the registry created
-      functionName: 'item_changes_notify_func'
+  // Initialize registry and build it up with proper type accumulation
+  const registry = new Registry<typeof prisma>(sql)
+    .models('item', 'list', 'uwU') // Add models to watch
+    .model('item')
+    .onEvents('INSERT', 'UPDATE', 'DELETE') // Configure events for item
+    .model('list')
+    .onEvents('INSERT', 'UPDATE', 'DELETE') // Configure events for list
+    .model('uwU')
+    .onEvents('INSERT') // Only watch inserts for uwU
+    .model('item')
+    .trigger('status_changes', {
+      on: ['UPDATE'],
+      when: ({ NEW, OLD }) => NEW.status !== OLD.status
     })
-    .create();
+    .custom('payment_events', {
+      id: 'string' as const,
+      amount: 'number' as const,
+      status: 'string' as const
+    });
 
-  // Alternative approach for different models
-  await triggers
-    .defineTrigger({
-      modelName: 'list',
-      triggerName: 'list_update_trigger',
-      timing: TriggerTiming.AFTER,
-      events: [TriggerOperation.UPDATE, TriggerOperation.INSERT],
-      // Use the function name that the registry created
-      functionName: 'list_updates_notify_func'
-    })
-    .create();
+  // Set up database and start listening
+  await registry.setup(); // Creates all functions, triggers, and starts listening
 
-  // Create the notification client
-  const notificationClient = triggers.createClient(registry);
-
-  // Option 1: Subscribe to individual channels with type safety
-  const itemChannel = notificationClient.channel('item_changes');
-  await itemChannel.subscribe((payload) => {
-    // payload is fully typed based on the 'item' model
-    console.log(`Item ${payload.data.id} updated`);
-  });
-
-  // Option 2: Create a unified subscription with event-based interface
-  const subscription = notificationClient.createSubscription();
-
-  // Start listening to all channels
-  await subscription.subscribe();
-
-  // Add handlers for specific channels with .on()
-  subscription.on('item_changes', (payload) => {
+  // Add handlers for different channels - now with full IntelliSense and typing
+  registry.on('item', (payload) => {
     // Fully typed - payload.data has Item type
-    console.log(`Item ${payload.data.id} changed to ${payload.data.status}`);
+    console.log(`Item ${payload.data.id} was ${payload.operation}`);
+    console.log(
+      `Item name: ${payload.data.name}, status: ${payload.data.status}`
+    );
   });
 
-  subscription.on('list_updates', (payload) => {
-    // Fully typed - payload.data has list type
-    console.log(`List ${payload.data.id} was ${payload.operation}`);
+  registry.on('list', (payload) => {
+    // Fully typed - payload.data has List type
+    console.log(`List ${payload.data.name} was ${payload.operation}`);
+    console.log(`List ID: ${payload.data.id}`);
   });
 
-  subscription.on('payment_events', (payload) => {
-    // Fully typed - payload.data has { id, amount, status }
-    console.log(`Payment ${payload.data.id}: $${payload.data.amount}`);
+  registry.on('uwU', (payload) => {
+    // Fully typed - payload.data has UwU type
+    console.log(`UwU ${payload.data.id} was ${payload.operation}`);
+    console.log(`UwU what: ${payload.data.what}`);
   });
 
-  // You can add multiple handlers for the same channel
-  subscription.on('item_changes', (payload) => {
-    console.log('Another handler for item changes');
+  registry.on('status_changes', (payload) => {
+    // Custom trigger handler - fully typed as Item
+    console.log(`Item status changed: ${payload.data.status}`);
+    console.log(`Item ID: ${payload.data.id}, Name: ${payload.data.name}`);
   });
 
-  // Later, remove a specific handler
-  const handler = (payload: NotificationPayload<any>) => console.log(payload);
-  subscription.on('item_changes', handler);
-  subscription.off('item_changes', handler);
+  registry.on('payment_events', (payload) => {
+    // Custom channel handler - fully typed with custom schema
+    console.log(`Payment: $${payload.data.amount}`);
+    console.log(
+      `Payment ID: ${payload.data.id}, Status: ${payload.data.status}`
+    );
+  });
 
-  // When done, unsubscribe from everything
-  await subscription.unsubscribeAll();
+  // Test the triggers with actual database operations
+  console.log('Creating test item...');
+  const testItem = await prisma.item.create({
+    data: { name: 'Test Item', status: 'pending' }
+  });
+  console.log(`Created item with ID: ${testItem.id}`);
+
+  // Wait a moment for the notification
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  console.log('Updating item status...');
+  await prisma.item.update({
+    where: { id: testItem.id },
+    data: { status: 'completed' }
+  });
+
+  // Wait a moment for the notification
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  console.log('Creating test list...');
+  const testList = await prisma.list.create({
+    data: { name: 'Test List' }
+  });
+
+  // Wait a moment for the notification
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  console.log('Creating test UwU...');
+  const testUwU = await prisma.uwU.create({
+    data: { what: 'Test UwU' }
+  });
+
+  // Wait a moment for the notification
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  // Simulate a custom payment event (you would trigger this from your payment processing code)
+  // For demo purposes, we'll manually trigger the notification
+  console.log('Simulating payment event...');
+  // In real usage, this would be triggered by a payment processor or another part of your system
+  // that calls a function which sends to the payment_events channel
+
+  // Clean up
+  console.log('Cleaning up...');
+  await prisma.item.delete({ where: { id: testItem.id } });
+  await prisma.list.delete({ where: { id: testList.id } });
+  await prisma.uwU.delete({ where: { id: testUwU.id } });
+
+  // Stop listening
+  await registry.stopListening();
+
+  console.log('Demo complete!');
 }
 
 main().catch(console.error);
