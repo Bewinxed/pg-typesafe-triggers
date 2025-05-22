@@ -75,8 +75,8 @@ export class PgTriggerManager<Client> {
     > & {
       condition?: TriggerCondition<Client, M>;
     }
-  ): BasicTriggerConfig<Client, M> {
-    const definition = new BasicTriggerConfig<Client, M>(this.sql);
+  ): TriggerDefinition<Client, M> {
+    const definition = new TriggerDefinition<Client, M>(this.sql);
 
     // Set all properties from options
     if (options.modelName) {
@@ -161,7 +161,7 @@ export class PgTriggerManager<Client> {
 /**
  * First-class object representing a PostgreSQL trigger
  */
-export class BasicTriggerConfig<Client, M extends ModelName<Client>> {
+export class TriggerDefinition<Client, M extends ModelName<Client>> {
   // Public properties for direct configuration
   public modelName!: M;
   public triggerName!: string;
@@ -232,7 +232,7 @@ export class BasicTriggerConfig<Client, M extends ModelName<Client>> {
    * @returns A promise that resolves to this instance
    * @throws Error if required properties are missing
    */
-  public async create(): Promise<BasicTriggerConfig<Client, M>> {
+  public async create(): Promise<TriggerDefinition<Client, M>> {
     this.validate();
 
     // Get the table name
