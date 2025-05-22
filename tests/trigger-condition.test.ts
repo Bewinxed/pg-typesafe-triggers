@@ -4,24 +4,31 @@ import {
   prisma,
   triggers,
   receivedNotifications,
-  resetNotifications
+  resetNotifications,
+  pgClient
 } from './setup';
 import { waitForNotifications, assertNotificationPayload } from './utils';
+import { TriggerManager } from '../src/trigger/manager';
 
 describe('Complex Trigger Conditions', () => {
+  let currentTriggerManagers: any[] = [];
+
   beforeEach(() => {
     resetNotifications();
+    currentTriggerManagers = [];
   });
 
   afterEach(async () => {
     // Remove any triggers created in tests
-    try {
-      await triggers!.dropTrigger('item', 'complex_trigger');
-      await triggers!.dropTrigger('uwU', 'uwu_trigger');
-      await triggers!.dropTrigger('list', 'list_trigger');
-    } catch (error) {
-      // Ignore errors if trigger doesn't exist
+    for (const triggerManager of currentTriggerManagers) {
+      try {
+        await triggerManager.getManager().stopListening();
+        await triggerManager.getManager().dropTrigger();
+      } catch (error) {
+        // Ignore errors if trigger doesn't exist
+      }
     }
+    currentTriggerManagers = [];
 
     // Clear test data
     await prisma!.item.deleteMany({});
@@ -31,18 +38,18 @@ describe('Complex Trigger Conditions', () => {
 
   test('complex condition with AND logic should work', async () => {
     // Create a trigger with multiple conditions joined by AND
-    const triggerDef = triggers!
+    const triggerManager = triggers!
       .defineTrigger('item')
       .withName('complex_trigger')
       .withTiming('AFTER')
-      .onEvents('INSERT');
+      .onEvents('INSERT')
+      .withCondition(
+        'NEW."name" LIKE \'Complex%\' AND NEW."status" = \'active\''
+      )
+      .notifyOn('condition_test');
 
-    const conditionBuilder = triggerDef.withConditionBuilder();
-    conditionBuilder.where('name', 'LIKE', 'Complex%');
-    conditionBuilder.where('status', '=', 'active');
-    conditionBuilder.build(); // Joins with AND by default
-
-    await triggerDef.executeFunction('condition_notify_func').create();
+    currentTriggerManagers.push(triggerManager);
+    await triggerManager.setup();
 
     // Case 1: name matches but status doesn't - should NOT trigger
     await prisma!.item.create({
@@ -87,18 +94,18 @@ describe('Complex Trigger Conditions', () => {
 
   test('complex condition with OR logic should work', async () => {
     // Create a trigger with multiple conditions joined by OR
-    const triggerDef = triggers!
+    const triggerManager = triggers!
       .defineTrigger('item')
       .withName('complex_trigger')
       .withTiming('AFTER')
-      .onEvents('INSERT');
+      .onEvents('INSERT')
+      .withCondition(
+        'NEW."name" = \'OR Test Item\' OR NEW."status" = \'special\''
+      )
+      .notifyOn('condition_test'); // Use notifyOn instead of executeFunction
 
-    const conditionBuilder = triggerDef.withConditionBuilder();
-    conditionBuilder.where('name', '=', 'OR Test Item');
-    conditionBuilder.where('status', '=', 'special');
-    conditionBuilder.buildOr(); // Use OR logic instead of AND
-
-    await triggerDef.executeFunction('condition_notify_func').create();
+    currentTriggerManagers.push(triggerManager);
+    await triggerManager.setup(); // Use setup() which does both setupDatabase() and startListening()
 
     // Case 1: first condition matches - should trigger
     const item1 = await prisma!.item.create({
@@ -138,14 +145,16 @@ describe('Complex Trigger Conditions', () => {
 
   test('raw SQL condition should work for advanced cases', async () => {
     // Create a trigger with a raw SQL condition
-    await triggers!
+    const triggerManager = triggers!
       .defineTrigger('item')
       .withName('complex_trigger')
       .withTiming('AFTER')
       .onEvents('INSERT')
       .withCondition('NEW."name" LIKE \'SQL%\' AND length(NEW."name") > 5')
-      .executeFunction('condition_notify_func')
-      .create();
+      .notifyOn('condition_test');
+
+    currentTriggerManagers.push(triggerManager);
+    await triggerManager.setup();
 
     // Case 1: name starts with SQL but too short - should NOT trigger
     await prisma!.item.create({
@@ -197,16 +206,18 @@ describe('Complex Trigger Conditions', () => {
     });
 
     // Create a trigger that detects status transitions from pending to completed
-    await triggers!
+    const triggerManager = triggers!
       .defineTrigger('item')
       .withName('complex_trigger')
       .withTiming('AFTER')
       .onEvents('UPDATE')
-      .withTypedCondition(
+      .withCondition(
         ({ OLD, NEW }) => OLD.status === 'pending' && NEW.status === 'completed'
       )
-      .executeFunction('condition_notify_func')
-      .create();
+      .notifyOn('condition_test');
+
+    currentTriggerManagers.push(triggerManager);
+    await triggerManager.setup();
 
     // Case 1: status changes but not from pending to completed - should NOT trigger
     await prisma!.item.update({
@@ -246,14 +257,48 @@ describe('Complex Trigger Conditions', () => {
   });
 
   test('trigger should work with UwU model', async () => {
+    console.log('=== DEBUGGING UwU TEST ===');
+
+    // Create a fresh TriggerManager instance for this test
+    const freshTriggerManager = new TriggerManager<NonNullable<typeof prisma>>(
+      pgClient!
+    );
+
+    console.log('Fresh manager created');
+
     // Test that our library works with the UwU model (different casing)
-    await triggers!
-      .defineTrigger('uwU')
-      .withName('uwu_trigger')
-      .withTiming('AFTER')
-      .onEvents('INSERT')
-      .executeFunction('condition_notify_func')
-      .create();
+    const triggerBuilder = freshTriggerManager.defineTrigger('uwU');
+    console.log(
+      'After defineTrigger:',
+      triggerBuilder.getManager().internal.getTriggerDef()
+    );
+
+    const withName = triggerBuilder.withName('uwu_trigger');
+    console.log(
+      'After withName:',
+      withName.getManager().internal.getTriggerDef()
+    );
+
+    const withTiming = withName.withTiming('AFTER');
+    console.log(
+      'After withTiming:',
+      withTiming.getManager().internal.getTriggerDef()
+    );
+
+    const withEvents = withTiming.onEvents('INSERT');
+    console.log(
+      'After onEvents:',
+      withEvents.getManager().internal.getTriggerDef()
+    );
+
+    const triggerManager = withEvents.notifyOn('condition_test');
+    console.log(
+      'After notifyOn:',
+      triggerManager.getManager().internal.getTriggerDef()
+    );
+
+    currentTriggerManagers.push(triggerManager);
+    await triggerManager.setup();
 
     // Create a UwU record
     const uwu = await prisma!.uwU.create({
@@ -275,14 +320,21 @@ describe('Complex Trigger Conditions', () => {
   });
 
   test('multi-event trigger should work', async () => {
+    // Create a fresh TriggerManager instance for this test
+    const freshTriggerManager = new TriggerManager<NonNullable<typeof prisma>>(
+      pgClient!
+    );
+
     // Create a trigger that fires on multiple event types
-    await triggers!
+    const triggerManager = freshTriggerManager
       .defineTrigger('list')
       .withName('list_trigger')
       .withTiming('AFTER')
       .onEvents('INSERT', 'UPDATE', 'DELETE')
-      .executeFunction('condition_notify_func')
-      .create();
+      .notifyOn('condition_test'); // No condition - just fire on all events
+
+    currentTriggerManagers.push(triggerManager);
+    await triggerManager.setup();
 
     // Test INSERT
     const list = await prisma!.list.create({

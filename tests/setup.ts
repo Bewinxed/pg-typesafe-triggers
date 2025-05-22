@@ -4,13 +4,13 @@ import { afterAll, beforeAll } from 'bun:test';
 import postgres from 'postgres';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { ListenRequest } from 'postgres';
-import { PgTriggerManager } from '../src';
+import { TriggerManager } from '../src/trigger/manager';
 import { PrismaClient } from '@prisma/client';
 
 // Global test objects
 export let prisma: PrismaClient | null = null;
 export let pgClient: postgres.Sql | null = null;
-export let triggers: PgTriggerManager<PrismaClient> | null = null;
+export let triggers: TriggerManager<PrismaClient> | null = null;
 
 // Track active listen requests for proper cleanup
 const activeListeners: ListenRequest[] = [];
@@ -52,7 +52,7 @@ beforeAll(async () => {
     pgClient = postgres(DATABASE_URL);
 
     // Initialize triggers client
-    triggers = new PgTypesafeTriggers<typeof prisma>(pgClient);
+    triggers = new TriggerManager<typeof prisma>(pgClient);
 
     // Clean up any existing data for a fresh start
     console.log('Cleaning up existing data...');
@@ -62,10 +62,11 @@ beforeAll(async () => {
 
     // Create notification functions for each test type
     console.log('Creating notification functions...');
-    await triggers.createNotifyFunction('insert_notify_func', 'insert_test');
-    await triggers.createNotifyFunction('update_notify_func', 'update_test');
-    await triggers.createNotifyFunction('delete_notify_func', 'delete_test');
-    await triggers.createNotifyFunction(
+    const executor = triggers.internal.getExecutor();
+    await executor.createNotifyFunction('insert_notify_func', 'insert_test');
+    await executor.createNotifyFunction('update_notify_func', 'update_test');
+    await executor.createNotifyFunction('delete_notify_func', 'delete_test');
+    await executor.createNotifyFunction(
       'condition_notify_func',
       'condition_test'
     );
@@ -89,7 +90,7 @@ beforeAll(async () => {
             // Parse the payload
             const parsedPayload = JSON.parse(payload);
             // Store in our notification tracker
-            console.log(`Received notification on ${channel}:`, parsedPayload);
+            // console.log(`Received notification on ${channel}:`, parsedPayload);
             receivedNotifications[channel].push(parsedPayload);
           } catch (error) {
             console.error(`Error handling notification on ${channel}:`, error);

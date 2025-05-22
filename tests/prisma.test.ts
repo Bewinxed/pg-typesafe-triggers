@@ -39,17 +39,17 @@ describe('Database Connection', () => {
       return;
     }
 
-    // We see from the diagnostic output that the table is called "Item" with capital I
-    // We must use the exact same case when creating triggers
-    await triggers
+    // Create a trigger using the new API
+    const triggerManager = triggers
       .defineTrigger('item')
       .withName('test_verification_trigger')
       .withTiming('AFTER')
       .onEvents('INSERT')
-      .executeFunction('insert_notify_func')
-      .create();
+      .executeFunction('insert_notify_func');
 
-    // Clean up - also use the correct case here
-    await triggers.dropTrigger('item', 'test_verification_trigger');
+    await triggerManager.setupDatabase();
+
+    // Clean up - drop the trigger
+    await triggerManager.getManager().dropTrigger();
   });
 });

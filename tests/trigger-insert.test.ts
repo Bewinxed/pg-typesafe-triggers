@@ -9,16 +9,21 @@ import {
 import { waitForNotifications, assertNotificationPayload } from './utils';
 
 describe('INSERT Triggers', () => {
+  let currentTriggerManager: any = null;
+
   beforeEach(() => {
     resetNotifications();
   });
 
   afterEach(async () => {
     // Remove any triggers created in tests
-    try {
-      await triggers!.dropTrigger('item', 'test_insert_trigger'); // Use correct capitalization
-    } catch (error) {
-      // Ignore errors if trigger doesn't exist
+    if (currentTriggerManager) {
+      try {
+        await currentTriggerManager.dropTrigger();
+      } catch (error) {
+        // Ignore errors if trigger doesn't exist
+      }
+      currentTriggerManager = null;
     }
 
     // Clear test data
@@ -27,13 +32,14 @@ describe('INSERT Triggers', () => {
 
   test('basic INSERT trigger should fire on item creation', async () => {
     // Create a basic INSERT trigger
-    await triggers!
-      .defineTrigger('item') // Use correct capitalization
+    currentTriggerManager = triggers!
+      .defineTrigger('item')
       .withName('test_insert_trigger')
       .withTiming('AFTER')
       .onEvents('INSERT')
-      .executeFunction('insert_notify_func')
-      .create();
+      .executeFunction('insert_notify_func');
+
+    await currentTriggerManager.setupDatabase();
 
     // Create an item that should trigger the notification
     const item = await prisma!.item.create({
@@ -58,14 +64,15 @@ describe('INSERT Triggers', () => {
 
   test('conditional INSERT trigger should only fire when condition is met', async () => {
     // Create a conditional INSERT trigger that only fires when status is 'active'
-    await triggers!
-      .defineTrigger('item') // Use correct capitalization
+    currentTriggerManager = triggers!
+      .defineTrigger('item')
       .withName('test_insert_trigger')
       .withTiming('AFTER')
       .onEvents('INSERT')
-      .withTypedCondition(({ NEW }) => NEW.status === 'active')
-      .executeFunction('insert_notify_func')
-      .create();
+      .withCondition(({ NEW }) => NEW.status === 'active')
+      .executeFunction('insert_notify_func');
+
+    await currentTriggerManager.setupDatabase();
 
     // Create an item with status 'pending' - should NOT trigger
     await prisma!.item.create({
@@ -100,19 +107,17 @@ describe('INSERT Triggers', () => {
     });
   });
 
-  test('INSERT trigger using condition builder should work', async () => {
-    // Create trigger using the condition builder
-    const triggerDef = triggers!
-      .defineTrigger('item') // Use correct capitalization
+  test('INSERT trigger using raw SQL condition should work', async () => {
+    // Create trigger using raw SQL condition
+    currentTriggerManager = triggers!
+      .defineTrigger('item')
       .withName('test_insert_trigger')
       .withTiming('AFTER')
-      .onEvents('INSERT');
+      .onEvents('INSERT')
+      .withCondition('NEW."name" LIKE \'Special%\'')
+      .executeFunction('insert_notify_func');
 
-    const conditionBuilder = triggerDef.withConditionBuilder();
-    conditionBuilder.where('name', 'LIKE', 'Special%');
-    conditionBuilder.build();
-
-    await triggerDef.executeFunction('insert_notify_func').create();
+    await currentTriggerManager.setupDatabase();
 
     // Create an item that should NOT trigger (name doesn't match)
     await prisma!.item.create({
