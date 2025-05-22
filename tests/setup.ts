@@ -4,13 +4,13 @@ import { afterAll, beforeAll } from 'bun:test';
 import postgres from 'postgres';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { ListenRequest } from 'postgres';
-import { PgTypesafeTriggers } from '../src';
+import { PgTriggerManager } from '../src';
 import { PrismaClient } from '@prisma/client';
 
 // Global test objects
 export let prisma: PrismaClient | null = null;
 export let pgClient: postgres.Sql | null = null;
-export let triggers: PgTypesafeTriggers<PrismaClient> | null = null;
+export let triggers: PgTriggerManager<PrismaClient> | null = null;
 
 // Track active listen requests for proper cleanup
 const activeListeners: ListenRequest[] = [];

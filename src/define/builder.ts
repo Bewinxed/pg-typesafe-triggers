@@ -15,7 +15,7 @@ import {
   buildWhereCondition
 } from '../utils/condition-builder';
 import { getTableName } from '../utils/prisma';
-import { ChannelConfig } from '../notification/registry';
+import { ChannelConfig } from '../trigger/registry';
 
 /**
  * Builder for defining and creating database triggers
