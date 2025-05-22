@@ -214,22 +214,30 @@ export class Registry<Client> {
   async startListening(): Promise<void> {
     if (this.isListening) return;
 
+    const subscribedChannels = new Set<string>();
+
     // Listen to model channels
     for (const [, channelName] of this.modelChannels) {
-      await this.subscriptionClient.subscribe(channelName, {
-        onNotification: (payload: any) => {
-          this.handleNotification(channelName, payload);
-        }
-      });
+      if (!subscribedChannels.has(channelName)) {
+        await this.subscriptionClient.subscribe(channelName, {
+          onNotification: (payload: any) => {
+            this.handleNotification(channelName, payload);
+          }
+        });
+        subscribedChannels.add(channelName);
+      }
     }
 
     // Listen to custom channels
     for (const [channelName] of this.customChannels) {
-      await this.subscriptionClient.subscribe(channelName, {
-        onNotification: (payload: any) => {
-          this.handleNotification(channelName, payload);
-        }
-      });
+      if (!subscribedChannels.has(channelName)) {
+        await this.subscriptionClient.subscribe(channelName, {
+          onNotification: (payload: any) => {
+            this.handleNotification(channelName, payload);
+          }
+        });
+        subscribedChannels.add(channelName);
+      }
     }
 
     // Listen to custom trigger channels
@@ -237,11 +245,14 @@ export class Registry<Client> {
       if (triggerName.includes('_custom_')) {
         const [, , triggerShortName] = triggerName.split('_');
         const channelName = `${triggerShortName}_events`;
-        await this.subscriptionClient.subscribe(channelName, {
-          onNotification: (payload: any) => {
-            this.handleNotification(channelName, payload);
-          }
-        });
+        if (!subscribedChannels.has(channelName)) {
+          await this.subscriptionClient.subscribe(channelName, {
+            onNotification: (payload: any) => {
+              this.handleNotification(channelName, payload);
+            }
+          });
+          subscribedChannels.add(channelName);
+        }
       }
     }
 
