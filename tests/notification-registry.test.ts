@@ -73,10 +73,10 @@ describe('Notification Registry and Unified Subscription', () => {
     receivedNotifications[channels.uwu] = [];
 
     // Create a registry with channels for all three models
-    registry = new Registry<NonNullable<typeof prisma>>(pgClient!);
+    let registry = new Registry<NonNullable<typeof prisma>>(pgClient!)
 
-    // Configure models with default triggers
-    registry
+      // Configure models with default triggers
+
       .models('item', 'list', 'uwU')
       .model('item')
       .onEvents('INSERT', 'UPDATE', 'DELETE')
@@ -240,8 +240,10 @@ describe('Notification Registry and Unified Subscription', () => {
     receivedNotifications[channelName] = [];
 
     // Create a simple registry for this test
-    registry = new Registry<NonNullable<typeof prisma>>(pgClient!);
-    registry.models('item').model('item').onEvents('INSERT');
+    let registry = new Registry<NonNullable<typeof prisma>>(pgClient!)
+      .models('item')
+      .model('item')
+      .onEvents('INSERT');
 
     activeTriggerNames = ['item_registry_trigger'];
 
@@ -304,21 +306,21 @@ describe('Notification Registry and Unified Subscription', () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Create a registry with custom channels - use completely fresh instance
-    registry = new Registry<NonNullable<typeof prisma>>(pgClient!);
+    let registry = new Registry<NonNullable<typeof prisma>>(pgClient!)
+      // Configure custom channel and trigger with static name
+      .custom(channelName, { id: 'string', message: 'string' })
 
-    // Configure custom channel and trigger with static name
-    registry.custom(channelName, { id: 'string', message: 'string' });
-
-    // Add a model with a custom trigger that uses the custom channel
-    registry.model('item').trigger('special', {
-      on: ['INSERT'],
-      when: ({ NEW }) => NEW.name.startsWith('Special')
-    });
+      // Add a model with a custom trigger that uses the custom channel
+      .model('item')
+      .trigger('special', {
+        on: ['INSERT'],
+        when: ({ NEW }) => NEW.name.startsWith('Special')
+      });
 
     activeTriggerNames = ['item_special_trigger'];
 
     // Set up handler for custom trigger - use the static channel name
-    registry.on(channelName, (payload) => {
+    registry.on('special', (payload) => {
       const itemPayload = payload as NotificationPayload<{
         id: string;
         name: string;
