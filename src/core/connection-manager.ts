@@ -1,32 +1,55 @@
 // src/core/connection-manager.ts
 import postgres from 'postgres';
 import { EventEmitter } from 'events';
+import { TriggerPlugin, TriggerEvent } from '../types';
 
 export interface ConnectionOptions {
   url: string;
-  max?: number;
-  idleTimeout?: number;
-  autoCleanup?: boolean;
+  plugins?: TriggerPlugin[];
+  lazy?: boolean;
+  connectionPool?: {
+    listener?: number;
+    transaction?: number;
+  };
+}
+
+type NotificationHandler = (payload: string) => void | Promise<void>;
+
+interface ChannelSubscription {
+  handlers: Set<NotificationHandler>;
+  listenRequest?: postgres.ListenRequest;
 }
 
 export class ConnectionManager extends EventEmitter {
   private listenerConnection?: postgres.Sql;
   private transactionConnection?: postgres.Sql;
-  private cleanupTasks = new Set<() => Promise<void>>();
+  private channels = new Map<string, ChannelSubscription>();
+  private plugins: TriggerPlugin[] = [];
   private disposed = false;
+  private cleanupTasks = new Set<() => Promise<void>>();
 
   constructor(private options: ConnectionOptions) {
     super();
 
-    if (options.autoCleanup) {
+    if (options.plugins) {
+      this.plugins = options.plugins;
+      this.installPlugins();
+    }
+
+    // Register cleanup handlers
+    if (process.env.NODE_ENV !== 'test') {
       this.registerCleanupHandlers();
     }
   }
 
-  /**
-   * Get a dedicated connection for LISTEN/NOTIFY operations
-   * This connection stays open and is reused for all listeners
-   */
+  private async installPlugins(): Promise<void> {
+    for (const plugin of this.plugins) {
+      if (plugin.install) {
+        await plugin.install(this);
+      }
+    }
+  }
+
   getListenerConnection(): postgres.Sql {
     if (this.disposed) {
       throw new Error('ConnectionManager has been disposed');
@@ -34,29 +57,21 @@ export class ConnectionManager extends EventEmitter {
 
     if (!this.listenerConnection) {
       this.listenerConnection = postgres(this.options.url, {
-        max: 1, // Single connection for all LISTEN operations
-        idle_timeout: 0, // Keep connection alive
-        onnotice: (notice) => {
-          this.emit('notice', notice);
-        }
+        max: this.options.connectionPool?.listener ?? 1,
+        idle_timeout: 0, // Keep alive for LISTEN
+        onnotice: (notice) => this.emit('notice', notice)
       });
 
       this.cleanupTasks.add(async () => {
         if (this.listenerConnection) {
           await this.listenerConnection.end();
-          this.listenerConnection = undefined;
         }
       });
-
-      this.emit('connection:created', 'listener');
     }
 
     return this.listenerConnection;
   }
 
-  /**
-   * Get a connection for regular queries and transactions
-   */
   getTransactionConnection(): postgres.Sql {
     if (this.disposed) {
       throw new Error('ConnectionManager has been disposed');
@@ -64,56 +79,167 @@ export class ConnectionManager extends EventEmitter {
 
     if (!this.transactionConnection) {
       this.transactionConnection = postgres(this.options.url, {
-        max: this.options.max || 10,
-        idle_timeout: this.options.idleTimeout || 30
+        max: this.options.connectionPool?.transaction ?? 10,
+        idle_timeout: 30
       });
 
       this.cleanupTasks.add(async () => {
         if (this.transactionConnection) {
           await this.transactionConnection.end();
-          this.transactionConnection = undefined;
         }
       });
-
-      this.emit('connection:created', 'transaction');
     }
 
     return this.transactionConnection;
   }
 
-  /**
-   * Execute within a transaction
-   */
+  async subscribe(
+    channel: string,
+    handler: NotificationHandler
+  ): Promise<void> {
+    let subscription = this.channels.get(channel);
+
+    if (!subscription) {
+      subscription = { handlers: new Set() };
+      this.channels.set(channel, subscription);
+
+      // Start listening
+      const sql = this.getListenerConnection();
+      subscription.listenRequest = sql.listen(channel, async (payload) => {
+        await this.handleNotification(channel, payload);
+      });
+    }
+
+    subscription.handlers.add(handler);
+  }
+
+  async unsubscribe(
+    channel: string,
+    handler?: NotificationHandler
+  ): Promise<void> {
+    const subscription = this.channels.get(channel);
+    if (!subscription) return;
+
+    if (handler) {
+      subscription.handlers.delete(handler);
+    } else {
+      subscription.handlers.clear();
+    }
+
+    if (subscription.handlers.size === 0) {
+      if (subscription.listenRequest) {
+        try {
+          const meta = await subscription.listenRequest;
+          await meta.unlisten();
+        } catch (error) {
+          this.emit('error', error);
+        }
+      }
+      this.channels.delete(channel);
+    }
+  }
+
+  private async handleNotification(
+    channel: string,
+    payload: string
+  ): Promise<void> {
+    const subscription = this.channels.get(channel);
+    if (!subscription) return;
+
+    const startTime = Date.now();
+    let parsedPayload: any;
+
+    try {
+      parsedPayload = JSON.parse(payload);
+    } catch (error) {
+      this.emit('error', new Error(`Failed to parse notification: ${error}`));
+      return;
+    }
+
+    // Run plugin hooks
+    for (const plugin of this.plugins) {
+      if (plugin.beforeNotification) {
+        parsedPayload = await plugin.beforeNotification(parsedPayload);
+      }
+    }
+
+    // Process handlers concurrently
+    const results = await Promise.allSettled(
+      Array.from(subscription.handlers).map((handler) =>
+        Promise.resolve(handler(JSON.stringify(parsedPayload)))
+      )
+    );
+
+    const duration = Date.now() - startTime;
+
+    // Run after hooks
+    for (const plugin of this.plugins) {
+      if (plugin.afterNotification) {
+        await plugin.afterNotification(parsedPayload, duration);
+      }
+    }
+
+    // Report errors
+    const failures = results.filter((r) => r.status === 'rejected');
+    if (failures.length > 0) {
+      this.emit('handler:errors', {
+        channel,
+        errors: failures.map((f) => (f as PromiseRejectedResult).reason)
+      });
+    }
+  }
+
+  async runPluginHook<T>(hookName: keyof TriggerPlugin, data: T): Promise<T> {
+    let result = data;
+
+    for (const plugin of this.plugins) {
+      const hook = plugin[hookName] as any;
+      if (typeof hook === 'function') {
+        result = (await hook.call(plugin, result)) || result;
+      }
+    }
+
+    return result;
+  }
+
   async transaction<T>(
     fn: (tx: postgres.TransactionSql) => Promise<T>
   ): Promise<T> {
-    const conn = this.getTransactionConnection();
-    return conn.begin(fn) as Promise<T>;
+    const sql = this.getTransactionConnection();
+    return sql.begin(fn) as Promise<T>;
   }
 
-  /**
-   * Dispose all connections and cleanup resources
-   */
+  async query(strings: TemplateStringsArray, ...values: any[]): Promise<any> {
+    const sql = this.getTransactionConnection();
+    return await sql(strings, ...values);
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) return;
 
     this.disposed = true;
     this.emit('disposing');
 
-    // Run all cleanup tasks
-    const tasks = Array.from(this.cleanupTasks);
-    await Promise.allSettled(tasks.map((task) => task()));
+    // Uninstall plugins
+    for (const plugin of this.plugins) {
+      if (plugin.uninstall) {
+        await plugin.uninstall(this);
+      }
+    }
+
+    // Close all channels
+    for (const channel of this.channels.keys()) {
+      await this.unsubscribe(channel);
+    }
+
+    // Run cleanup tasks
+    await Promise.allSettled(
+      Array.from(this.cleanupTasks).map((task) => task())
+    );
 
     this.cleanupTasks.clear();
+    this.channels.clear();
     this.removeAllListeners();
-    this.emit('disposed');
-  }
-
-  /**
-   * Check if the manager has been disposed
-   */
-  isDisposed(): boolean {
-    return this.disposed;
   }
 
   private registerCleanupHandlers(): void {
@@ -130,5 +256,9 @@ export class ConnectionManager extends EventEmitter {
       process.removeListener('SIGINT', cleanup);
       process.removeListener('beforeExit', cleanup);
     });
+  }
+
+  isDisposed(): boolean {
+    return this.disposed;
   }
 }
