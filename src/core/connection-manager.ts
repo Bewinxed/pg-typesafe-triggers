@@ -7,6 +7,7 @@ export interface ConnectionOptions {
   url: string;
   plugins?: TriggerPlugin[];
   lazy?: boolean;
+  autoCleanup?: boolean;
   connectionPool?: {
     listener?: number;
     transaction?: number;

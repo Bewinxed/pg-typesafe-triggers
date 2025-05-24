@@ -2,15 +2,15 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { prisma, resetNotifications, pgClient } from './setup';
 import { waitForCondition } from './utils';
-import { NotificationPayload } from '../src';
-import { Registry } from '../src/trigger/registry';
+import { TriggerEvent, TriggerRegistry, createTriggers } from '../src';
 
 describe('Notification Registry and Unified Subscription', () => {
   // Record received notifications for testing with unique channel names per test
   const testId = Math.random().toString(36).substring(7);
   const receivedNotifications: Record<string, any[]> = {};
 
-  let registry: Registry<NonNullable<typeof prisma>> | null = null;
+  let registry: TriggerRegistry<NonNullable<typeof prisma>> | null = null;
+  let triggerManager: ReturnType<typeof createTriggers<NonNullable<typeof prisma>>> | null = null;
   let activeTriggerNames: string[] = [];
 
   // Setup triggers and registry before tests
@@ -29,16 +29,27 @@ describe('Notification Registry and Unified Subscription', () => {
 
     activeTriggerNames = [];
     registry = null;
+    triggerManager = null;
   });
 
   // Clean up after each test
   afterEach(async () => {
     if (registry) {
       try {
-        await registry.stopListening();
+        await registry.stop();
+        await registry.drop();
       } catch (error) {
         console.warn('Error stopping registry:', error);
       }
+    }
+
+    if (triggerManager) {
+      try {
+        await triggerManager.dispose();
+      } catch (error) {
+        console.warn('Error disposing trigger manager:', error);
+      }
+      triggerManager = null;
     }
 
     // Drop triggers manually with proper names
@@ -72,18 +83,41 @@ describe('Notification Registry and Unified Subscription', () => {
     receivedNotifications[channels.list] = [];
     receivedNotifications[channels.uwu] = [];
 
+    // Create trigger manager
+    triggerManager = createTriggers<NonNullable<typeof prisma>>(
+      process.env.DATABASE_URL!
+    );
+
     // Create a registry with channels for all three models
-    let registry = new Registry<NonNullable<typeof prisma>>(pgClient!)
+    registry = triggerManager.registry();
 
-      // Configure models with default triggers
+    // Add triggers for each model
+    registry.add('item', {
+      name: 'item_registry_trigger',
+      events: ['INSERT', 'UPDATE', 'DELETE'],
+      timing: 'AFTER',
+      forEach: 'ROW',
+      functionName: 'item_notify_func',
+      notify: channels.item
+    });
 
-      .models('item', 'list', 'uwU')
-      .model('item')
-      .onEvents('INSERT', 'UPDATE', 'DELETE')
-      .model('list')
-      .onEvents('INSERT', 'UPDATE', 'DELETE')
-      .model('uwU')
-      .onEvents('INSERT', 'UPDATE', 'DELETE');
+    registry.add('list', {
+      name: 'list_registry_trigger',
+      events: ['INSERT', 'UPDATE', 'DELETE'],
+      timing: 'AFTER',
+      forEach: 'ROW',
+      functionName: 'list_notify_func',
+      notify: channels.list
+    });
+
+    registry.add('uwU', {
+      name: 'uwU_registry_trigger',
+      events: ['INSERT', 'UPDATE', 'DELETE'],
+      timing: 'AFTER',
+      forEach: 'ROW',
+      functionName: 'uwu_notify_func',
+      notify: channels.uwu
+    });
 
     activeTriggerNames = [
       'item_registry_trigger',
@@ -91,57 +125,67 @@ describe('Notification Registry and Unified Subscription', () => {
       'uwU_registry_trigger'
     ];
 
-    // Set up handlers for all channels - map to model names as that's how the Registry API works
-    registry.on('item', (payload) => {
-      const itemPayload = payload as NotificationPayload<{
-        id: string;
-        name: string;
-        status: string;
-        listId: string | null;
-      }>;
-      receivedNotifications[channels.item].push(itemPayload);
+    // Set up handlers for all channels
+    registry.on('item', (event: TriggerEvent<NonNullable<typeof prisma>, 'item', any>) => {
+      receivedNotifications[channels.item].push(event);
     });
 
-    registry.on('list', (payload) => {
-      const listPayload = payload as NotificationPayload<{
-        id: string;
-        name: string;
-      }>;
-      receivedNotifications[channels.list].push(listPayload);
+    registry.on('list', (event: TriggerEvent<NonNullable<typeof prisma>, 'list', any>) => {
+      receivedNotifications[channels.list].push(event);
     });
 
-    registry.on('uwU', (payload) => {
-      const uwuPayload = payload as NotificationPayload<{
-        id: string;
-        what: string;
-      }>;
-      receivedNotifications[channels.uwu].push(uwuPayload);
+    registry.on('uwU', (event: TriggerEvent<NonNullable<typeof prisma>, 'uwU', any>) => {
+      receivedNotifications[channels.uwu].push(event);
     });
 
     // Setup database and start listening
     await registry.setup();
+    await registry.listen();
 
     // Perform database operations to trigger events
 
-    // Create items
+    // Create a user and list first
+    const user = await prisma!.user.create({
+      data: {
+        email: `test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}@example.com`,
+        name: 'Test User'
+      }
+    });
+
+    const list = await prisma!.list.create({
+      data: {
+        name: 'Test List',
+        ownerId: user.id
+      }
+    });
+
+    // Create items with list relation
     const item1 = await prisma!.item.create({
       data: {
         name: 'Test Item 1',
-        status: 'pending'
+        status: 'PENDING',
+        listId: list.id
       }
     });
 
     const item2 = await prisma!.item.create({
       data: {
         name: 'Test Item 2',
-        status: 'active'
+        status: 'PENDING',
+        listId: list.id
       }
     });
 
-    // Create a list
-    const list = await prisma!.list.create({
+    // Create a list with owner
+    const list2 = await prisma!.list.create({
       data: {
-        name: 'Test List'
+        name: 'Test List',
+        owner: {
+          create: {
+            email: `test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}@example.com`,
+            name: 'Test User'
+          }
+        }
       }
     });
 
@@ -155,7 +199,7 @@ describe('Notification Registry and Unified Subscription', () => {
     // Update an item
     await prisma!.item.update({
       where: { id: item1.id },
-      data: { status: 'completed' }
+      data: { status: 'COMPLETED' }
     });
 
     // Update a list
@@ -208,7 +252,7 @@ describe('Notification Registry and Unified Subscription', () => {
     // Verify specific item data
     const updatedItem = itemUpdates[0];
     expect(updatedItem.data.id).toBe(item1.id);
-    expect(updatedItem.data.status).toBe('completed');
+    expect(updatedItem.data.status).toBe('COMPLETED');
 
     // Verify list notifications
     const listInserts = receivedNotifications[channels.list].filter(
@@ -235,35 +279,60 @@ describe('Notification Registry and Unified Subscription', () => {
     expect(uwuInserts[0].data.what).toBe('Test UwU');
   });
 
-  test('should support off() method for removing handlers', async () => {
+  test('should support unsubscribe method for removing handlers', async () => {
     const channelName = `item_events_${testId}_2`;
     receivedNotifications[channelName] = [];
 
+    // Create trigger manager
+    triggerManager = createTriggers<NonNullable<typeof prisma>>(
+      process.env.DATABASE_URL!
+    );
+
     // Create a simple registry for this test
-    let registry = new Registry<NonNullable<typeof prisma>>(pgClient!)
-      .models('item')
-      .model('item')
-      .onEvents('INSERT');
+    registry = triggerManager.registry();
+    registry.add('item', {
+      name: 'item_registry_trigger',
+      events: ['INSERT'],
+      timing: 'AFTER',
+      forEach: 'ROW',
+      functionName: 'item_notify_func',
+      notify: channelName
+    });
 
     activeTriggerNames = ['item_registry_trigger'];
 
     let handlerCallCount = 0;
-    const testHandler = (payload: NotificationPayload<any>) => {
+    const testHandler = (event: TriggerEvent<NonNullable<typeof prisma>, 'item', any>) => {
       handlerCallCount++;
-      receivedNotifications[channelName].push(payload);
+      receivedNotifications[channelName].push(event);
     };
 
     // Add the handler
-    registry.on('item', testHandler);
+    const unsubscribe = registry.on('item', testHandler);
 
     // Setup and start listening
     await registry.setup();
+    await registry.listen();
+
+    // Create a list first
+    const list = await prisma!.list.create({
+      data: {
+        name: 'Test List for Off',
+        owner: {
+          create: {
+            email: `test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}@example.com`,
+            name: 'Test User 2'
+          }
+        }
+      }
+    });
 
     // Create an item - should trigger handler
     await prisma!.item.create({
       data: {
         name: 'Test Item for Off',
-        status: 'pending'
+        status: 'PENDING',
+        listId: list.id
       }
     });
 
@@ -274,8 +343,8 @@ describe('Notification Registry and Unified Subscription', () => {
     expect(receivedNotifications[channelName].length).toBe(1);
     expect(handlerCallCount).toBe(1);
 
-    // Remove the handler
-    registry.off('item', testHandler);
+    // Remove the handler using the unsubscribe function
+    unsubscribe();
 
     // Reset counters
     handlerCallCount = 0;
@@ -285,7 +354,8 @@ describe('Notification Registry and Unified Subscription', () => {
     await prisma!.item.create({
       data: {
         name: 'Test Item After Off',
-        status: 'pending'
+        status: 'PENDING',
+        listId: list.id
       }
     });
 
@@ -298,67 +368,69 @@ describe('Notification Registry and Unified Subscription', () => {
   });
 
   test('should handle custom channels and triggers', async () => {
-    // Simplify - use a static channel name that matches what Registry expects
-    const channelName = 'special_events';
+    // Create trigger manager
+    triggerManager = createTriggers<NonNullable<typeof prisma>>(
+      process.env.DATABASE_URL!
+    );
+
+    // Use a static channel name that matches what Registry expects
+    const channelName = `special_events_${testId}`;
     receivedNotifications[channelName] = [];
 
     // Add a small delay to ensure previous test cleanup is complete
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Create a registry with custom channels - use completely fresh instance
-    let registry = new Registry<NonNullable<typeof prisma>>(pgClient!)
-      // Configure custom channel and trigger with static name
-      .custom(channelName, { id: 'string', message: 'string' })
+    // Create a registry with a custom trigger
+    registry = triggerManager.registry();
 
-      // Add a model with a custom trigger that uses the custom channel
-      .model('item')
-      .trigger('special', {
-        on: ['INSERT'],
-        when: ({ NEW }) => NEW.name.startsWith('Special')
-      });
+    // Add a model with a custom trigger that uses conditional logic
+    registry.add('item', {
+      name: 'item_special_trigger',
+      events: ['INSERT'],
+      timing: 'AFTER',
+      forEach: 'ROW',
+      functionName: 'special_notify_func',
+      notify: channelName,
+      when: (c) => c.NEW('name').like('Special%')
+    });
 
     activeTriggerNames = ['item_special_trigger'];
 
-    // Set up handler for custom trigger - use the static channel name
-    registry.on('special', (payload) => {
-      const itemPayload = payload as NotificationPayload<{
-        id: string;
-        name: string;
-        status: string;
-        listId: string | null;
-      }>;
-
+    // Set up handler for custom trigger
+    registry.on('item', (event: TriggerEvent<NonNullable<typeof prisma>, 'item', any>) => {
       console.log(
         '*** HANDLER CALLED ***',
-        itemPayload.operation,
-        itemPayload.data?.name
+        event.operation,
+        event.data?.name
       );
-      receivedNotifications[channelName].push(payload);
+      receivedNotifications[channelName].push(event);
     });
 
     console.log('=== DEBUG INFO ===');
     console.log('Channel name:', channelName);
     await registry.setup();
+    await registry.listen();
     console.log('Registry status:', registry.getStatus());
-    console.log('Active subscriptions in test setup');
 
-    const subscriptionClient = (registry as any).subscriptionClient;
-    console.log(
-      'Handler count AFTER setup for',
-      channelName,
-      ':',
-      subscriptionClient.getHandlerCount(channelName)
-    );
-    console.log(
-      'All active channels AFTER setup:',
-      subscriptionClient.getActiveChannels()
-    );
+    // Create a list first
+    const list = await prisma!.list.create({
+      data: {
+        name: 'Test List for Special',
+        owner: {
+          create: {
+            email: `test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}@example.com`,
+            name: 'Test User 3'
+          }
+        }
+      }
+    });
 
     // Create a regular item - should NOT trigger
     await prisma!.item.create({
       data: {
         name: 'Regular Item',
-        status: 'pending'
+        status: 'PENDING',
+        listId: list.id
       }
     });
 
@@ -370,7 +442,8 @@ describe('Notification Registry and Unified Subscription', () => {
     await prisma!.item.create({
       data: {
         name: 'Special Item',
-        status: 'pending'
+        status: 'PENDING',
+        listId: list.id
       }
     });
 

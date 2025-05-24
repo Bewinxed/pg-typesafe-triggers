@@ -1,24 +1,36 @@
 // src/index.ts
 import { ConnectionManager } from './core/connection-manager';
-import {
-  TriggerBuilder,
-  createTriggerFromConfig
-} from './core/trigger-builder';
 import { TriggerRegistry } from './core/registry';
 import {
+  createTriggerBuilder,
+  createTriggerFromConfig,
+  TriggerBuilder,
+  WithModelState
+} from './core/trigger-builder';
+import {
+  ModelName,
+  Registry,
   TriggerConfig,
   TriggerHandle,
-  Registry,
-  ModelName,
   TriggerManagerOptions
 } from './types';
 
 // Re-export types
 export * from './types';
-export { TriggerPlugin } from './types';
 
 // Export condition builders
 export { sql, type Condition } from './core/conditions';
+
+// Export the builder types
+export type {
+  CompleteState,
+  EmptyState,
+  TriggerBuilder,
+  WithEventsState,
+  WithModelState,
+  WithNameState,
+  WithTimingState
+} from './core/trigger-builder';
 
 // Main class that provides both APIs
 export class TriggerManager<Client> {
@@ -45,8 +57,10 @@ export class TriggerManager<Client> {
   /**
    * Start building a trigger using fluent API
    */
-  for<M extends ModelName<Client>>(model: M): TriggerBuilder<Client, M> {
-    const builder = new TriggerBuilder<Client>(this.connectionManager);
+  for<M extends ModelName<Client>>(
+    model: M
+  ): TriggerBuilder<Client, WithModelState<M>> {
+    const builder = createTriggerBuilder<Client>(this.connectionManager);
     return builder.for(model);
   }
 
@@ -84,6 +98,15 @@ export class TriggerManager<Client> {
   async transaction<T>(fn: (tx: any) => Promise<T>): Promise<T> {
     return await this.connectionManager.transaction(fn);
   }
+
+  /**
+   * Get migration helper
+   */
+  migrations() {
+    // Import MigrationHelper if needed
+    const { MigrationHelper } = require('./core/migration-helpers');
+    return new MigrationHelper(this.connectionManager);
+  }
 }
 
 // Factory function
@@ -93,3 +116,14 @@ export function createTriggers<Client>(
 ): TriggerManager<Client> {
   return new TriggerManager<Client>(databaseUrl, options);
 }
+
+// Export individual components for advanced usage
+export { BaseTrigger } from './core/base-trigger';
+export { ConnectionManager } from './core/connection-manager';
+export { MigrationHelper } from './core/migration-helpers';
+export { TriggerRegistry } from './core/registry';
+export {
+  buildWhereCondition,
+  type ConditionEvaluator
+} from './utils/condition-parser';
+export { getColumnName, getModelFields, getTableName } from './utils/prisma';

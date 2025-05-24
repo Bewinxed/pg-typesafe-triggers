@@ -1,0 +1,6 @@
+[test]
+preload = ["./tests/setup.ts"]
+
+[resolve]
+# Make sure we're using the source files for tests
+alias = { "../src" = "./src" }

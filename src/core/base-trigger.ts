@@ -1,6 +1,7 @@
-// src/core/base-trigger.ts (updated)
+// src/core/base-trigger.ts (updated with DMMF)
 import { ConnectionManager } from './connection-manager';
 import { Condition, ConditionBuilder } from './conditions';
+import { getTableName, getColumnName } from '../utils/prisma';
 import {
   TriggerConfig,
   TriggerHandle,
@@ -21,6 +22,7 @@ export class BaseTrigger<Client, M extends ModelName<Client>>
   private channel: string;
   private handlers = new Set<(event: any) => void | Promise<void>>();
   private registry?: Registry<Client>;
+  private tableName: string;
 
   constructor(
     config: TriggerConfig<Client, M>,
@@ -31,6 +33,9 @@ export class BaseTrigger<Client, M extends ModelName<Client>>
     this.channel =
       config.notify ||
       `${String(config.model)}_${config.events.join('_').toLowerCase()}`;
+
+    // Get actual table name from DMMF
+    this.tableName = getTableName(String(config.model));
   }
 
   private normalizeConfig(
@@ -114,7 +119,9 @@ export class BaseTrigger<Client, M extends ModelName<Client>>
       $$ LANGUAGE plpgsql;
     `;
 
-    await this.connectionManager.query([sql] as any);
+    await this.connectionManager.transaction(async (tx) => {
+      await tx.unsafe(sql);
+    });
   }
 
   private buildConditionSQL(config: TriggerConfig<Client, M>): string {
@@ -131,8 +138,8 @@ export class BaseTrigger<Client, M extends ModelName<Client>>
     }
 
     // It's already a Condition object
-    if ('toSQL' in config.when) {
-      return config.when.toSQL();
+    if (config.when && typeof config.when === 'object' && 'toSQL' in config.when) {
+      return (config.when as any).toSQL();
     }
 
     return '';
@@ -141,17 +148,20 @@ export class BaseTrigger<Client, M extends ModelName<Client>>
   private async createTrigger(config: TriggerConfig<Client, M>): Promise<void> {
     const conditionSQL = this.buildConditionSQL(config);
 
-    // Build trigger SQL
+    // Build trigger SQL using actual table name
     let sql = `CREATE TRIGGER "${config.name}"\n`;
     sql += `${config.timing} ${config.events.join(' OR ')}\n`;
 
     if (config.watchColumns && config.watchColumns.length > 0) {
-      sql += `OF ${config.watchColumns
-        .map((col) => `"${String(col)}"`)
-        .join(', ')}\n`;
+      // Map field names to actual column names
+      const columns = config.watchColumns.map((col) =>
+        getColumnName(String(config.model), String(col))
+      );
+      sql += `OF ${columns.map((col) => `"${col}"`).join(', ')}\n`;
     }
 
-    sql += `ON "${String(config.model)}"\n`;
+    // Use actual table name from DMMF
+    sql += `ON "${this.tableName}"\n`;
     sql += `FOR EACH ${config.forEach}\n`;
 
     if (conditionSQL) {
@@ -162,7 +172,9 @@ export class BaseTrigger<Client, M extends ModelName<Client>>
       config.functionArgs?.join(', ') || ''
     });`;
 
-    await this.connectionManager.query([sql] as any);
+    await this.connectionManager.transaction(async (tx) => {
+      await tx.unsafe(sql);
+    });
   }
 
   async drop(): Promise<void> {
@@ -170,15 +182,18 @@ export class BaseTrigger<Client, M extends ModelName<Client>>
 
     await this.stop();
 
-    const sql = `DROP TRIGGER IF EXISTS "${this.config.name}" ON "${String(
-      this.config.model
-    )}";`;
-    await this.connectionManager.query([sql] as any);
+    // Use actual table name
+    const sql = `DROP TRIGGER IF EXISTS "${this.config.name}" ON "${this.tableName}";`;
+    await this.connectionManager.transaction(async (tx) => {
+      await tx.unsafe(sql);
+    });
 
     // Drop function if it was auto-created
     if (this.config.notify) {
       const dropFunc = `DROP FUNCTION IF EXISTS ${this.config.functionName}();`;
-      await this.connectionManager.query([dropFunc] as any);
+      await this.connectionManager.transaction(async (tx) => {
+        await tx.unsafe(dropFunc);
+      });
     }
 
     this.isSetupComplete = false;
@@ -234,7 +249,7 @@ export class BaseTrigger<Client, M extends ModelName<Client>>
   getStatus(): TriggerStatus {
     return {
       name: this.config.name!,
-      table: String(this.config.model),
+      table: this.tableName, // Use actual table name
       active: this.isSetupComplete && this.isListeningActive,
       isSetup: this.isSetupComplete,
       isListening: this.isListeningActive,
@@ -252,5 +267,11 @@ export class BaseTrigger<Client, M extends ModelName<Client>>
 
   attachToRegistry(registry: Registry<Client>): void {
     this.registry = registry;
+  }
+
+  // Add convenience methods
+  async setupAndListen(): Promise<void> {
+    await this.setup();
+    await this.listen();
   }
 }

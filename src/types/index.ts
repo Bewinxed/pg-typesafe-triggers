@@ -118,6 +118,7 @@ export type FieldType<
 
 // Trigger configuration
 // In src/types/index.ts - update TriggerConfig
+// src/types/index.ts
 export type TriggerConfig<
   Client,
   M extends ModelName<Client>,
@@ -130,9 +131,8 @@ export type TriggerConfig<
   forEach: TriggerForEach;
   functionName: string;
   watchColumns?: 'UPDATE' extends E ? Array<ModelField<Client, M>> : never;
-  when?: string | ((c: ConditionBuilder<Client, M>) => Condition);
+  when?: string | ((c: ConditionBuilder<Client, M>) => Condition); // Remove ConditionEvaluator here
   notify?: string;
-
   functionArgs?: string[];
 };
 
@@ -227,4 +227,5 @@ export interface TriggerManagerOptions {
     listener?: number;
     transaction?: number;
   };
+  prismaClient?: any; // The actual generated Prisma client instance for DMMF access
 }

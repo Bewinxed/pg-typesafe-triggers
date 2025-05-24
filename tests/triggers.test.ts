@@ -8,21 +8,42 @@ import {
   pgClient
 } from './setup';
 import { waitForNotifications, assertNotificationPayload } from './utils';
-import { TriggerManager } from '../src/trigger/manager';
+import { createTriggers, TriggerManager, TriggerHandle } from '../src';
 
 describe('CRUD Triggers', () => {
   let testItemId: string;
   let testItem: any;
-  let currentTriggerManager: any = null;
+  let testList: any;
+  let testUser: any;
+  let currentTriggerManager: TriggerManager<NonNullable<typeof prisma>> | null = null;
+  let currentTrigger: TriggerHandle<NonNullable<typeof prisma>, any> | null = null;
 
   beforeEach(async () => {
     resetNotifications();
+
+    // Create a test user first with unique email
+    const uniqueEmail = `test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}@example.com`;
+    testUser = await prisma!.user.create({
+      data: {
+        email: uniqueEmail,
+        name: 'Test User'
+      }
+    });
+
+    // Create a test list
+    testList = await prisma!.list.create({
+      data: {
+        name: 'Test List',
+        ownerId: testUser.id
+      }
+    });
 
     // Create a test item for update/delete operations
     testItem = await prisma!.item.create({
       data: {
         name: 'Test Item for CRUD',
-        status: 'pending'
+        status: 'PENDING',
+        listId: testList.id
       }
     });
     testItemId = testItem.id;
@@ -30,11 +51,21 @@ describe('CRUD Triggers', () => {
 
   afterEach(async () => {
     // Remove any triggers created in tests
-    if (currentTriggerManager) {
+    if (currentTrigger) {
       try {
-        await currentTriggerManager.getManager().dropTrigger();
+        await currentTrigger.drop();
       } catch (error) {
         // Ignore errors if trigger doesn't exist
+      }
+      currentTrigger = null;
+    }
+
+    // Dispose trigger manager
+    if (currentTriggerManager) {
+      try {
+        await currentTriggerManager.dispose();
+      } catch (error) {
+        // Ignore errors
       }
       currentTriggerManager = null;
     }
@@ -47,24 +78,45 @@ describe('CRUD Triggers', () => {
   describe('INSERT Triggers', () => {
     test('basic INSERT trigger should fire on item creation', async () => {
       // Create a FRESH TriggerManager for this test to avoid condition bleeding
-      const freshTriggerManager = new TriggerManager<
-        NonNullable<typeof prisma>
-      >(pgClient!);
+      currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
+        process.env.DATABASE_URL!
+      );
 
-      currentTriggerManager = freshTriggerManager
-        .defineTrigger('item')
+      // Create function first
+      await currentTriggerManager.transaction(async (tx) => {
+        await tx`
+          CREATE OR REPLACE FUNCTION insert_notify_func()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            PERFORM pg_notify('insert_test', 
+              json_build_object(
+                'operation', TG_OP,
+                'timestamp', NOW(),
+                'data', row_to_json(NEW)
+              )::text
+            );
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
+        `;
+      });
+
+      currentTrigger = currentTriggerManager
+        .for('item')
         .withName('test_insert_trigger')
-        .withTiming('AFTER')
-        .onEvents('INSERT')
-        .executeFunction('insert_notify_func');
+        .after()
+        .on('INSERT')
+        .executeFunction('insert_notify_func')
+        .build();
 
-      await currentTriggerManager.setupDatabase();
+      await currentTrigger.setup();
 
       // Create an item that should trigger the notification
       const item = await prisma!.item.create({
         data: {
           name: 'Test Insert Item',
-          status: 'pending'
+          status: 'PENDING',
+          listId: testList.id
         }
       });
 
@@ -77,31 +129,52 @@ describe('CRUD Triggers', () => {
       assertNotificationPayload(notification, 'INSERT', {
         id: item.id,
         name: 'Test Insert Item',
-        status: 'pending'
+        status: 'PENDING'
       });
     });
 
     test('conditional INSERT trigger should only fire when condition is met', async () => {
       // Create a FRESH TriggerManager for this test
-      const freshTriggerManager = new TriggerManager<
-        NonNullable<typeof prisma>
-      >(pgClient!);
+      currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
+        process.env.DATABASE_URL!
+      );
 
-      currentTriggerManager = freshTriggerManager
-        .defineTrigger('item')
+      // Create function first
+      await currentTriggerManager.transaction(async (tx) => {
+        await tx`
+          CREATE OR REPLACE FUNCTION insert_notify_func()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            PERFORM pg_notify('insert_test', 
+              json_build_object(
+                'operation', TG_OP,
+                'timestamp', NOW(),
+                'data', row_to_json(NEW)
+              )::text
+            );
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
+        `;
+      });
+
+      currentTrigger = currentTriggerManager
+        .for('item')
         .withName('test_insert_conditional_trigger')
-        .withTiming('AFTER')
-        .onEvents('INSERT')
-        .withCondition(({ NEW }) => NEW.status === 'active')
-        .executeFunction('insert_notify_func');
+        .after()
+        .on('INSERT')
+        .when((c) => c.NEW('status').eq('IN_PROGRESS'))
+        .executeFunction('insert_notify_func')
+        .build();
 
-      await currentTriggerManager.setupDatabase();
+      await currentTrigger.setup();
 
-      // Create an item with status 'pending' - should NOT trigger
+      // Create an item with status 'PENDING' - should NOT trigger
       await prisma!.item.create({
         data: {
           name: 'Test Item Pending',
-          status: 'pending'
+          status: 'PENDING',
+          listId: testList.id
         }
       });
 
@@ -109,11 +182,12 @@ describe('CRUD Triggers', () => {
       await new Promise((resolve) => setTimeout(resolve, 500));
       expect(receivedNotifications['insert_test'].length).toBe(0);
 
-      // Create an item with status 'active' - should trigger
+      // Create an item with status 'IN_PROGRESS' - should trigger
       const activeItem = await prisma!.item.create({
         data: {
           name: 'Test Item Active',
-          status: 'active'
+          status: 'IN_PROGRESS',
+          listId: testList.id
         }
       });
 
@@ -126,31 +200,52 @@ describe('CRUD Triggers', () => {
       assertNotificationPayload(notification, 'INSERT', {
         id: activeItem.id,
         name: 'Test Item Active',
-        status: 'active'
+        status: 'IN_PROGRESS'
       });
     });
 
     test('INSERT trigger using raw SQL condition should work', async () => {
       // Create a FRESH TriggerManager for this test
-      const freshTriggerManager = new TriggerManager<
-        NonNullable<typeof prisma>
-      >(pgClient!);
+      currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
+        process.env.DATABASE_URL!
+      );
 
-      currentTriggerManager = freshTriggerManager
-        .defineTrigger('item')
+      // Create function first
+      await currentTriggerManager.transaction(async (tx) => {
+        await tx`
+          CREATE OR REPLACE FUNCTION insert_notify_func()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            PERFORM pg_notify('insert_test', 
+              json_build_object(
+                'operation', TG_OP,
+                'timestamp', NOW(),
+                'data', row_to_json(NEW)
+              )::text
+            );
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
+        `;
+      });
+
+      currentTrigger = currentTriggerManager
+        .for('item')
         .withName('test_insert_sql_trigger')
-        .withTiming('AFTER')
-        .onEvents('INSERT')
-        .withCondition('NEW."name" LIKE \'Special%\'')
-        .executeFunction('insert_notify_func');
+        .after()
+        .on('INSERT')
+        .when('NEW."name" LIKE \'Special%\'')
+        .executeFunction('insert_notify_func')
+        .build();
 
-      await currentTriggerManager.setupDatabase();
+      await currentTrigger.setup();
 
       // Create an item that should NOT trigger (name doesn't match)
       await prisma!.item.create({
         data: {
           name: 'Regular Item',
-          status: 'pending'
+          status: 'PENDING',
+          listId: testList.id
         }
       });
 
@@ -162,7 +257,8 @@ describe('CRUD Triggers', () => {
       const specialItem = await prisma!.item.create({
         data: {
           name: 'Special Item',
-          status: 'pending'
+          status: 'PENDING',
+          listId: testList.id
         }
       });
 
@@ -175,7 +271,7 @@ describe('CRUD Triggers', () => {
       assertNotificationPayload(notification, 'INSERT', {
         id: specialItem.id,
         name: 'Special Item',
-        status: 'pending'
+        status: 'PENDING'
       });
     });
   });
@@ -183,25 +279,45 @@ describe('CRUD Triggers', () => {
   describe('UPDATE Triggers', () => {
     test('basic UPDATE trigger should fire on any item update', async () => {
       // Create a FRESH TriggerManager for this test
-      const freshTriggerManager = new TriggerManager<
-        NonNullable<typeof prisma>
-      >(pgClient!);
+      currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
+        process.env.DATABASE_URL!
+      );
 
-      currentTriggerManager = freshTriggerManager
-        .defineTrigger('item')
+      // Create function first
+      await currentTriggerManager.transaction(async (tx) => {
+        await tx`
+          CREATE OR REPLACE FUNCTION update_notify_func()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            PERFORM pg_notify('update_test', 
+              json_build_object(
+                'operation', TG_OP,
+                'timestamp', NOW(),
+                'data', row_to_json(NEW)
+              )::text
+            );
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
+        `;
+      });
+
+      currentTrigger = currentTriggerManager
+        .for('item')
         .withName('test_update_trigger')
-        .withTiming('AFTER')
-        .onEvents('UPDATE')
-        .executeFunction('update_notify_func');
+        .after()
+        .on('UPDATE')
+        .executeFunction('update_notify_func')
+        .build();
 
-      await currentTriggerManager.setupDatabase();
+      await currentTrigger.setup();
 
       // Update the test item
       const updatedItem = await prisma!.item.update({
         where: { id: testItemId },
         data: {
           name: 'Updated Item Name',
-          status: 'completed'
+          status: 'COMPLETED'
         }
       });
 
@@ -214,25 +330,45 @@ describe('CRUD Triggers', () => {
       assertNotificationPayload(notification, 'UPDATE', {
         id: updatedItem.id,
         name: 'Updated Item Name',
-        status: 'completed'
+        status: 'COMPLETED'
       });
     });
 
     test('UPDATE trigger should only fire when watched column changes', async () => {
       // Create a FRESH TriggerManager for this test
-      const freshTriggerManager = new TriggerManager<
-        NonNullable<typeof prisma>
-      >(pgClient!);
+      currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
+        process.env.DATABASE_URL!
+      );
 
-      currentTriggerManager = freshTriggerManager
-        .defineTrigger('item')
+      // Create function first
+      await currentTriggerManager.transaction(async (tx) => {
+        await tx`
+          CREATE OR REPLACE FUNCTION update_notify_func()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            PERFORM pg_notify('update_test', 
+              json_build_object(
+                'operation', TG_OP,
+                'timestamp', NOW(),
+                'data', row_to_json(NEW)
+              )::text
+            );
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
+        `;
+      });
+
+      currentTrigger = currentTriggerManager
+        .for('item')
         .withName('test_update_watched_trigger')
-        .withTiming('AFTER')
-        .onEvents('UPDATE')
+        .after()
+        .on('UPDATE')
         .watchColumns('status')
-        .executeFunction('update_notify_func');
+        .executeFunction('update_notify_func')
+        .build();
 
-      await currentTriggerManager.setupDatabase();
+      await currentTrigger.setup();
 
       // Update only the name - should NOT trigger
       await prisma!.item.update({
@@ -247,7 +383,7 @@ describe('CRUD Triggers', () => {
       // Update the status - should trigger
       const updatedItem = await prisma!.item.update({
         where: { id: testItemId },
-        data: { status: 'completed' }
+        data: { status: 'COMPLETED' }
       });
 
       // Wait for the notification
@@ -259,40 +395,60 @@ describe('CRUD Triggers', () => {
       assertNotificationPayload(notification, 'UPDATE', {
         id: updatedItem.id,
         name: 'Updated Name Only', // Name from previous update
-        status: 'completed' // New status
+        status: 'COMPLETED' // New status
       });
     });
 
     test('conditional UPDATE trigger should only fire when condition is met', async () => {
       // Create a FRESH TriggerManager for this test
-      const freshTriggerManager = new TriggerManager<
-        NonNullable<typeof prisma>
-      >(pgClient!);
+      currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
+        process.env.DATABASE_URL!
+      );
 
-      currentTriggerManager = freshTriggerManager
-        .defineTrigger('item')
+      // Create function first
+      await currentTriggerManager.transaction(async (tx) => {
+        await tx`
+          CREATE OR REPLACE FUNCTION update_notify_func()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            PERFORM pg_notify('update_test', 
+              json_build_object(
+                'operation', TG_OP,
+                'timestamp', NOW(),
+                'data', row_to_json(NEW)
+              )::text
+            );
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
+        `;
+      });
+
+      currentTrigger = currentTriggerManager
+        .for('item')
         .withName('test_update_conditional_trigger')
-        .withTiming('AFTER')
-        .onEvents('UPDATE')
-        .withCondition(({ NEW }) => NEW.status === 'active')
-        .executeFunction('update_notify_func');
+        .after()
+        .on('UPDATE')
+        .when((c) => c.NEW('status').eq('IN_PROGRESS'))
+        .executeFunction('update_notify_func')
+        .build();
 
-      await currentTriggerManager.setupDatabase();
+      await currentTrigger.setup();
 
       // Update to status 'completed' - should NOT trigger
       await prisma!.item.update({
         where: { id: testItemId },
-        data: { status: 'completed' }
+        data: { status: 'COMPLETED' }
       });
 
       // Wait a moment to ensure no notification is fired
       await new Promise((resolve) => setTimeout(resolve, 500));
       expect(receivedNotifications['update_test'].length).toBe(0);
 
-      // Update to status 'active' - should trigger
+      // Update to status 'IN_PROGRESS' - should trigger
       const updatedItem = await prisma!.item.update({
         where: { id: testItemId },
-        data: { status: 'active' }
+        data: { status: 'IN_PROGRESS' }
       });
 
       // Wait for the notification
@@ -303,25 +459,45 @@ describe('CRUD Triggers', () => {
       const notification = receivedNotifications['update_test'][0];
       assertNotificationPayload(notification, 'UPDATE', {
         id: updatedItem.id,
-        status: 'active'
+        status: 'IN_PROGRESS'
       });
     });
 
     test('UPDATE trigger with field comparison condition should work', async () => {
       // Create a FRESH TriggerManager for this test
-      const freshTriggerManager = new TriggerManager<
-        NonNullable<typeof prisma>
-      >(pgClient!);
+      currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
+        process.env.DATABASE_URL!
+      );
 
-      currentTriggerManager = freshTriggerManager
-        .defineTrigger('item')
+      // Create function first
+      await currentTriggerManager.transaction(async (tx) => {
+        await tx`
+          CREATE OR REPLACE FUNCTION update_notify_func()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            PERFORM pg_notify('update_test', 
+              json_build_object(
+                'operation', TG_OP,
+                'timestamp', NOW(),
+                'data', row_to_json(NEW)
+              )::text
+            );
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
+        `;
+      });
+
+      currentTrigger = currentTriggerManager
+        .for('item')
         .withName('test_update_comparison_trigger')
-        .withTiming('AFTER')
-        .onEvents('UPDATE')
-        .withCondition(({ OLD, NEW }) => OLD.status !== NEW.status)
-        .executeFunction('update_notify_func');
+        .after()
+        .on('UPDATE')
+        .when((c) => c.changed('status'))
+        .executeFunction('update_notify_func')
+        .build();
 
-      await currentTriggerManager.setupDatabase();
+      await currentTrigger.setup();
 
       // Update only the name - should NOT trigger a status change
       await prisma!.item.update({
@@ -336,7 +512,7 @@ describe('CRUD Triggers', () => {
       // Update the status - should trigger
       const updatedItem = await prisma!.item.update({
         where: { id: testItemId },
-        data: { status: 'completed' }
+        data: { status: 'COMPLETED' }
       });
 
       // Wait for the notification
@@ -348,7 +524,7 @@ describe('CRUD Triggers', () => {
       assertNotificationPayload(notification, 'UPDATE', {
         id: updatedItem.id,
         name: 'New Name Without Status Change',
-        status: 'completed'
+        status: 'COMPLETED'
       });
     });
   });
@@ -356,18 +532,38 @@ describe('CRUD Triggers', () => {
   describe('DELETE Triggers', () => {
     test('basic DELETE trigger should fire on item deletion', async () => {
       // Create a FRESH TriggerManager for this test
-      const freshTriggerManager = new TriggerManager<
-        NonNullable<typeof prisma>
-      >(pgClient!);
+      currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
+        process.env.DATABASE_URL!
+      );
 
-      currentTriggerManager = freshTriggerManager
-        .defineTrigger('item')
+      // Create function first
+      await currentTriggerManager.transaction(async (tx) => {
+        await tx`
+          CREATE OR REPLACE FUNCTION delete_notify_func()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            PERFORM pg_notify('delete_test', 
+              json_build_object(
+                'operation', TG_OP,
+                'timestamp', NOW(),
+                'data', row_to_json(OLD)
+              )::text
+            );
+            RETURN OLD;
+          END;
+          $$ LANGUAGE plpgsql;
+        `;
+      });
+
+      currentTrigger = currentTriggerManager
+        .for('item')
         .withName('test_delete_trigger')
-        .withTiming('AFTER')
-        .onEvents('DELETE')
-        .executeFunction('delete_notify_func');
+        .after()
+        .on('DELETE')
+        .executeFunction('delete_notify_func')
+        .build();
 
-      await currentTriggerManager.setupDatabase();
+      await currentTrigger.setup();
 
       // Delete the test item
       await prisma!.item.delete({
@@ -383,7 +579,7 @@ describe('CRUD Triggers', () => {
       assertNotificationPayload(notification, 'DELETE', {
         id: testItemId,
         name: 'Test Item for CRUD',
-        status: 'pending'
+        status: 'PENDING'
       });
     });
 
@@ -392,24 +588,45 @@ describe('CRUD Triggers', () => {
       const activeItem = await prisma!.item.create({
         data: {
           name: 'Active Item For Deletion',
-          status: 'active'
+          status: 'IN_PROGRESS',
+          listId: testList.id
         }
       });
 
       // Create a FRESH TriggerManager for this test
-      const freshTriggerManager = new TriggerManager<
-        NonNullable<typeof prisma>
-      >(pgClient!);
+      currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
+        process.env.DATABASE_URL!
+      );
 
-      currentTriggerManager = freshTriggerManager
-        .defineTrigger('item')
+      // Create function first
+      await currentTriggerManager.transaction(async (tx) => {
+        await tx`
+          CREATE OR REPLACE FUNCTION delete_notify_func()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            PERFORM pg_notify('delete_test', 
+              json_build_object(
+                'operation', TG_OP,
+                'timestamp', NOW(),
+                'data', row_to_json(OLD)
+              )::text
+            );
+            RETURN OLD;
+          END;
+          $$ LANGUAGE plpgsql;
+        `;
+      });
+
+      currentTrigger = currentTriggerManager
+        .for('item')
         .withName('test_delete_conditional_trigger')
-        .withTiming('AFTER')
-        .onEvents('DELETE')
-        .withCondition(({ OLD }) => OLD.status === 'active')
-        .executeFunction('delete_notify_func');
+        .after()
+        .on('DELETE')
+        .when((c) => c.OLD('status').eq('IN_PROGRESS'))
+        .executeFunction('delete_notify_func')
+        .build();
 
-      await currentTriggerManager.setupDatabase();
+      await currentTrigger.setup();
 
       // Delete the pending item - should NOT trigger
       await prisma!.item.delete({
@@ -434,7 +651,7 @@ describe('CRUD Triggers', () => {
       assertNotificationPayload(notification, 'DELETE', {
         id: activeItem.id,
         name: 'Active Item For Deletion',
-        status: 'active'
+        status: 'IN_PROGRESS'
       });
     });
 
@@ -443,24 +660,45 @@ describe('CRUD Triggers', () => {
       const specialItem = await prisma!.item.create({
         data: {
           name: 'Special Item For Deletion',
-          status: 'pending'
+          status: 'PENDING',
+          listId: testList.id
         }
       });
 
       // Create a FRESH TriggerManager for this test
-      const freshTriggerManager = new TriggerManager<
-        NonNullable<typeof prisma>
-      >(pgClient!);
+      currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
+        process.env.DATABASE_URL!
+      );
 
-      currentTriggerManager = freshTriggerManager
-        .defineTrigger('item')
+      // Create function first
+      await currentTriggerManager.transaction(async (tx) => {
+        await tx`
+          CREATE OR REPLACE FUNCTION delete_notify_func()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            PERFORM pg_notify('delete_test', 
+              json_build_object(
+                'operation', TG_OP,
+                'timestamp', NOW(),
+                'data', row_to_json(OLD)
+              )::text
+            );
+            RETURN OLD;
+          END;
+          $$ LANGUAGE plpgsql;
+        `;
+      });
+
+      currentTrigger = currentTriggerManager
+        .for('item')
         .withName('test_delete_sql_trigger')
-        .withTiming('AFTER')
-        .onEvents('DELETE')
-        .withCondition('OLD."name" LIKE \'Special%\'') // Use raw SQL condition with OLD only
-        .executeFunction('delete_notify_func');
+        .after()
+        .on('DELETE')
+        .when('OLD."name" LIKE \'Special%\'') // Use raw SQL condition with OLD only
+        .executeFunction('delete_notify_func')
+        .build();
 
-      await currentTriggerManager.setupDatabase();
+      await currentTrigger.setup();
 
       // Delete the normal item - should NOT trigger
       await prisma!.item.delete({
@@ -492,22 +730,56 @@ describe('CRUD Triggers', () => {
   describe('Multi-Event Triggers', () => {
     test('trigger with multiple events should work for all operations', async () => {
       // Create a FRESH TriggerManager for this test
-      const freshTriggerManager = new TriggerManager<
-        NonNullable<typeof prisma>
-      >(pgClient!);
+      currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
+        process.env.DATABASE_URL!
+      );
 
-      currentTriggerManager = freshTriggerManager
-        .defineTrigger('list')
+      // Create function first
+      await currentTriggerManager.transaction(async (tx) => {
+        await tx`
+          CREATE OR REPLACE FUNCTION condition_notify_func()
+          RETURNS TRIGGER AS $$
+          BEGIN
+            IF TG_OP = 'DELETE' THEN
+              PERFORM pg_notify('condition_test', 
+                json_build_object(
+                  'operation', TG_OP,
+                  'timestamp', NOW(),
+                  'data', row_to_json(OLD)
+                )::text
+              );
+              RETURN OLD;
+            ELSE
+              PERFORM pg_notify('condition_test', 
+                json_build_object(
+                  'operation', TG_OP,
+                  'timestamp', NOW(),
+                  'data', row_to_json(NEW)
+                )::text
+              );
+              RETURN NEW;
+            END IF;
+          END;
+          $$ LANGUAGE plpgsql;
+        `;
+      });
+
+      currentTrigger = currentTriggerManager
+        .for('list')
         .withName('multi_event_trigger')
-        .withTiming('AFTER')
-        .onEvents('INSERT', 'UPDATE', 'DELETE')
-        .executeFunction('condition_notify_func'); // Reuse condition_test channel
+        .after()
+        .on('INSERT', 'UPDATE', 'DELETE')
+        .executeFunction('condition_notify_func')
+        .build();
 
-      await currentTriggerManager.setupDatabase();
+      await currentTrigger.setup();
 
       // Test INSERT
       const list = await prisma!.list.create({
-        data: { name: 'Multi-Event Test List' }
+        data: { 
+          name: 'Multi-Event Test List',
+          ownerId: testUser.id
+        }
       });
 
       // Wait for the notification

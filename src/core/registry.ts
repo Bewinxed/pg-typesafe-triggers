@@ -1,7 +1,6 @@
 // src/core/registry.ts
 import { ConnectionManager } from './connection-manager';
 import { BaseTrigger } from './base-trigger';
-import { TriggerBuilder } from './trigger-builder';
 import {
   Registry,
   RegistryStatus,
@@ -25,34 +24,24 @@ export class TriggerRegistry<Client> implements Registry<Client> {
     this.connectionManager = connectionManager;
   }
 
+  // src/core/registry.ts
   add<M extends ModelName<Client>>(
     modelOrTrigger: M | TriggerHandle<Client, any>,
-    config?: Omit<TriggerConfig<Client, M>, 'model'>
+    config?: Omit<TriggerConfig<Client, M>, 'model'> // <-- Require all props except model
   ): this {
     if (typeof modelOrTrigger === 'string') {
-      // Quick add with config
       if (!config) {
         throw new Error('Config is required when adding by model name');
       }
 
       const fullConfig: TriggerConfig<Client, M> = {
         ...config,
-        model: modelOrTrigger,
-        timing: config.timing || 'AFTER',
-        events: config.events || ['INSERT', 'UPDATE', 'DELETE'],
-        forEach: config.forEach || 'ROW',
-        functionName:
-          config.functionName ||
-          this.generateFunctionName(
-            modelOrTrigger,
-            config.events || ['INSERT', 'UPDATE', 'DELETE']
-          )
+        model: modelOrTrigger
       } as TriggerConfig<Client, M>;
 
       const trigger = new BaseTrigger(fullConfig, this.connectionManager);
       this.addTrigger(trigger);
     } else {
-      // Add existing trigger
       this.addTrigger(modelOrTrigger);
     }
 

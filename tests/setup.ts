@@ -4,7 +4,7 @@ import { afterAll, beforeAll } from 'bun:test';
 import postgres from 'postgres';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { ListenRequest } from 'postgres';
-import { TriggerManager } from '../src/trigger/manager';
+import { createTriggers, TriggerManager } from '../src';
 import { PrismaClient } from '@prisma/client';
 
 // Global test objects
@@ -51,25 +51,98 @@ beforeAll(async () => {
     // Initialize postgres.js client
     pgClient = postgres(DATABASE_URL);
 
-    // Initialize triggers client
-    triggers = new TriggerManager<typeof prisma>(pgClient);
+    // Initialize triggers client using new API
+    triggers = createTriggers<typeof prisma>(DATABASE_URL);
 
     // Clean up any existing data for a fresh start
     console.log('Cleaning up existing data...');
     await prisma.item.deleteMany({});
     await prisma.list.deleteMany({});
     await prisma.uwU.deleteMany({});
+    await prisma.user.deleteMany({});
 
     // Create notification functions for each test type
     console.log('Creating notification functions...');
-    const executor = triggers.internal.getExecutor();
-    await executor.createNotifyFunction('insert_notify_func', 'insert_test');
-    await executor.createNotifyFunction('update_notify_func', 'update_test');
-    await executor.createNotifyFunction('delete_notify_func', 'delete_test');
-    await executor.createNotifyFunction(
-      'condition_notify_func',
-      'condition_test'
-    );
+    
+    // Use the transaction API to create functions
+    await triggers.transaction(async (tx) => {
+      // These functions are already created in individual tests,
+      // but we'll create simple versions here for setup
+      await tx`
+        CREATE OR REPLACE FUNCTION insert_notify_func()
+        RETURNS TRIGGER AS $$
+        BEGIN
+          PERFORM pg_notify('insert_test', 
+            json_build_object(
+              'operation', TG_OP,
+              'timestamp', NOW(),
+              'data', row_to_json(NEW)
+            )::text
+          );
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+      `;
+
+      await tx`
+        CREATE OR REPLACE FUNCTION update_notify_func()
+        RETURNS TRIGGER AS $$
+        BEGIN
+          PERFORM pg_notify('update_test', 
+            json_build_object(
+              'operation', TG_OP,
+              'timestamp', NOW(),
+              'data', row_to_json(NEW)
+            )::text
+          );
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+      `;
+
+      await tx`
+        CREATE OR REPLACE FUNCTION delete_notify_func()
+        RETURNS TRIGGER AS $$
+        BEGIN
+          PERFORM pg_notify('delete_test', 
+            json_build_object(
+              'operation', TG_OP,
+              'timestamp', NOW(),
+              'data', row_to_json(OLD)
+            )::text
+          );
+          RETURN OLD;
+        END;
+        $$ LANGUAGE plpgsql;
+      `;
+
+      await tx`
+        CREATE OR REPLACE FUNCTION condition_notify_func()
+        RETURNS TRIGGER AS $$
+        BEGIN
+          IF TG_OP = 'DELETE' THEN
+            PERFORM pg_notify('condition_test', 
+              json_build_object(
+                'operation', TG_OP,
+                'timestamp', NOW(),
+                'data', row_to_json(OLD)
+              )::text
+            );
+            RETURN OLD;
+          ELSE
+            PERFORM pg_notify('condition_test', 
+              json_build_object(
+                'operation', TG_OP,
+                'timestamp', NOW(),
+                'data', row_to_json(NEW)
+              )::text
+            );
+            RETURN NEW;
+          END IF;
+        END;
+        $$ LANGUAGE plpgsql;
+      `;
+    });
 
     // Set up listeners for all notification channels
     console.log('Setting up notification listeners...');
@@ -85,7 +158,7 @@ beforeAll(async () => {
       ];
 
       for (const channel of channels) {
-        pgClient.listen(channel, (payload) => {
+        const listenRequest = pgClient.listen(channel, (payload) => {
           try {
             // Parse the payload
             const parsedPayload = JSON.parse(payload);
@@ -96,6 +169,7 @@ beforeAll(async () => {
             console.error(`Error handling notification on ${channel}:`, error);
           }
         });
+        activeListeners.push(listenRequest);
       }
     }
 
@@ -138,6 +212,12 @@ afterAll(async () => {
       await prisma.item.deleteMany({});
       await prisma.list.deleteMany({});
       await prisma.uwU.deleteMany({});
+      await prisma.user.deleteMany({});
+    }
+
+    // Dispose triggers
+    if (triggers) {
+      await triggers.dispose();
     }
 
     // Close connections

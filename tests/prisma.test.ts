@@ -10,11 +10,27 @@ describe('Database Connection', () => {
       return;
     }
 
+    // Create a user and list first
+    const user = await prisma.user.create({
+      data: {
+        email: `test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}@example.com`,
+        name: 'Test User'
+      }
+    });
+
+    const list = await prisma.list.create({
+      data: {
+        name: 'Test List',
+        ownerId: user.id
+      }
+    });
+
     // Create an item
     const item = await prisma.item.create({
       data: {
         name: 'Test Connection Item',
-        status: 'pending'
+        status: 'PENDING',
+        listId: list.id
       }
     });
 
@@ -30,6 +46,12 @@ describe('Database Connection', () => {
     await prisma.item.delete({
       where: { id: item.id }
     });
+    await prisma.list.delete({
+      where: { id: list.id }
+    });
+    await prisma.user.delete({
+      where: { id: user.id }
+    });
   });
 
   test('can create triggers', async () => {
@@ -39,17 +61,35 @@ describe('Database Connection', () => {
       return;
     }
 
-    // Create a trigger using the new API
-    const triggerManager = triggers
-      .defineTrigger('item')
-      .withName('test_verification_trigger')
-      .withTiming('AFTER')
-      .onEvents('INSERT')
-      .executeFunction('insert_notify_func');
+    // Create function first
+    await triggers.transaction(async (tx) => {
+      await tx`
+        CREATE OR REPLACE FUNCTION test_verify_func()
+        RETURNS TRIGGER AS $$
+        BEGIN
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+      `;
+    });
 
-    await triggerManager.setupDatabase();
+    // Create a trigger using the new API
+    const trigger = triggers
+      .for('item')
+      .withName('test_verification_trigger')
+      .after()
+      .on('INSERT')
+      .executeFunction('test_verify_func')
+      .build();
+
+    await trigger.setup();
 
     // Clean up - drop the trigger
-    await triggerManager.getManager().dropTrigger();
+    await trigger.drop();
+
+    // Clean up function
+    await triggers.transaction(async (tx) => {
+      await tx`DROP FUNCTION IF EXISTS test_verify_func();`;
+    });
   });
 });

@@ -1,7 +1,7 @@
 // prisma/schema.prisma
 generator client {
-  provider        = "prisma-client-js"
-  output          = "../src/generated/prisma"
+  provider = "prisma-client-js"
+
   previewFeatures = ["queryCompiler", "driverAdapters"]
 }
 
@@ -10,22 +10,141 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Example models for our trigger library testing
-model Item {
-  id     String  @id @default(uuid())
-  name   String
-  status String  @default("pending")
-  listId String?
-  list   List?   @relation(fields: [listId], references: [id])
+// User model for authentication and ownership
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  name      String
+  role      Role      @default(USER)
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  lists      List[]
+  items      Item[]
+  activities Activity[]
 }
 
+// List model - contains items
 model List {
-  id    String @id @default(uuid())
-  name  String
+  id          String     @id @default(uuid())
+  name        String
+  description String?
+  status      ListStatus @default(ACTIVE)
+  ownerId     String
+  isPublic    Boolean    @default(false)
+  itemCount   Int        @default(0) // Denormalized count
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  archivedAt  DateTime?
+
+  // Relations
+  owner User   @relation(fields: [ownerId], references: [id])
   items Item[]
 }
 
+// Item model - belongs to lists
+model Item {
+  id          String     @id @default(uuid())
+  name        String
+  description String?
+  status      ItemStatus @default(PENDING)
+  priority    Int        @default(0) // 0-5 scale
+  dueDate     DateTime?
+  completedAt DateTime?
+  listId      String
+  assigneeId  String?
+  tags        String[] // Array of tags
+  metadata    Json? // Flexible JSON field
+  version     Int        @default(1) // For optimistic locking
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  // Relations
+  list       List       @relation(fields: [listId], references: [id], onDelete: Cascade)
+  assignee   User?      @relation(fields: [assigneeId], references: [id])
+  activities Activity[]
+
+  @@index([listId, status])
+  @@index([assigneeId])
+}
+
+// Activity log for audit trail
+model Activity {
+  id         String       @id @default(uuid())
+  type       ActivityType
+  entityType String // 'item', 'list', etc.
+  entityId   String
+  userId     String
+  changes    Json // What changed
+  metadata   Json? // Additional context
+  createdAt  DateTime     @default(now())
+
+  // Relations
+  user User  @relation(fields: [userId], references: [id])
+  item Item? @relation(fields: [entityId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([userId])
+}
+
+// Notification model for async processing
+model Notification {
+  id          String             @id @default(uuid())
+  type        String
+  payload     Json
+  status      NotificationStatus @default(PENDING)
+  attempts    Int                @default(0)
+  lastError   String?
+  processedAt DateTime?
+  createdAt   DateTime           @default(now())
+
+  @@index([status, createdAt])
+}
+
+// Enums
+enum Role {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum ListStatus {
+  ACTIVE
+  ARCHIVED
+  DELETED
+}
+
+enum ItemStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ActivityType {
+  CREATED
+  UPDATED
+  DELETED
+  ASSIGNED
+  UNASSIGNED
+  STATUS_CHANGED
+  MOVED
+}
+
+enum NotificationStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// Example of a table with @map directive
 model UwU {
   id   String @id @default(uuid())
   what String
+
+  @@map("uwu_table") // Maps to different table name in DB
 }
