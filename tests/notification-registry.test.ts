@@ -2,15 +2,17 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { prisma, resetNotifications, pgClient } from './setup';
 import { waitForCondition } from './utils';
-import { TriggerEvent, TriggerRegistry, createTriggers } from '../src';
+import { TriggerEvent, Registry, createTriggers } from '../src';
 
 describe('Notification Registry and Unified Subscription', () => {
   // Record received notifications for testing with unique channel names per test
   const testId = Math.random().toString(36).substring(7);
   const receivedNotifications: Record<string, any[]> = {};
 
-  let registry: TriggerRegistry<NonNullable<typeof prisma>> | null = null;
-  let triggerManager: ReturnType<typeof createTriggers<NonNullable<typeof prisma>>> | null = null;
+  let registry: Registry<NonNullable<typeof prisma>, any> | null = null;
+  let triggerManager: ReturnType<
+    typeof createTriggers<NonNullable<typeof prisma>>
+  > | null = null;
   let activeTriggerNames: string[] = [];
 
   // Setup triggers and registry before tests
@@ -26,6 +28,33 @@ describe('Notification Registry and Unified Subscription', () => {
     Object.keys(receivedNotifications).forEach((key) => {
       receivedNotifications[key] = [];
     });
+
+    // Clean up any existing triggers before starting the test
+    const tables = ['Item', 'List', 'uwu_table', 'User'];
+    const allPossibleTriggers = [
+      'item_registry_trigger',
+      'list_registry_trigger',
+      'uwU_registry_trigger',
+      'item_special_trigger',
+      'item_created_trigger',
+      'item_status_changed_trigger',
+      'item_completed_trigger',
+      'trigger_one_trigger',
+      'trigger_two_trigger',
+      'trigger_three_trigger'
+    ];
+
+    for (const triggerName of allPossibleTriggers) {
+      for (const table of tables) {
+        try {
+          await pgClient!.unsafe(
+            `DROP TRIGGER IF EXISTS "${triggerName}" ON "${table}";`
+          );
+        } catch (error) {
+          // Ignore errors if triggers don't exist
+        }
+      }
+    }
 
     activeTriggerNames = [];
     registry = null;
@@ -53,8 +82,30 @@ describe('Notification Registry and Unified Subscription', () => {
     }
 
     // Drop triggers manually with proper names
-    const tables = ['Item', 'List', 'UwU'];
+    const tables = ['Item', 'List', 'uwu_table', 'User'];
     for (const triggerName of activeTriggerNames) {
+      for (const table of tables) {
+        try {
+          await pgClient!.unsafe(
+            `DROP TRIGGER IF EXISTS "${triggerName}" ON "${table}";`
+          );
+        } catch (error) {
+          // Ignore errors if triggers don't exist
+        }
+      }
+    }
+
+    // Also drop any triggers that might have been created with define()
+    const commonTriggerNames = [
+      'item_created_trigger',
+      'item_status_changed_trigger',
+      'item_completed_trigger',
+      'trigger_one_trigger',
+      'trigger_two_trigger',
+      'trigger_three_trigger'
+    ];
+
+    for (const triggerName of commonTriggerNames) {
       for (const table of tables) {
         try {
           await pgClient!.unsafe(
@@ -92,7 +143,7 @@ describe('Notification Registry and Unified Subscription', () => {
     registry = triggerManager.registry();
 
     // Add triggers for each model
-    registry.add('item', {
+    registry!.add('item', {
       name: 'item_registry_trigger',
       events: ['INSERT', 'UPDATE', 'DELETE'],
       timing: 'AFTER',
@@ -101,7 +152,7 @@ describe('Notification Registry and Unified Subscription', () => {
       notify: channels.item
     });
 
-    registry.add('list', {
+    registry!.add('list', {
       name: 'list_registry_trigger',
       events: ['INSERT', 'UPDATE', 'DELETE'],
       timing: 'AFTER',
@@ -110,7 +161,7 @@ describe('Notification Registry and Unified Subscription', () => {
       notify: channels.list
     });
 
-    registry.add('uwU', {
+    registry!.add('uwU', {
       name: 'uwU_registry_trigger',
       events: ['INSERT', 'UPDATE', 'DELETE'],
       timing: 'AFTER',
@@ -126,28 +177,39 @@ describe('Notification Registry and Unified Subscription', () => {
     ];
 
     // Set up handlers for all channels
-    registry.on('item', (event: TriggerEvent<NonNullable<typeof prisma>, 'item', any>) => {
-      receivedNotifications[channels.item].push(event);
-    });
+    registry!.on(
+      'item',
+      (event: TriggerEvent<NonNullable<typeof prisma>, 'item', any>) => {
+        receivedNotifications[channels.item].push(event);
+      }
+    );
 
-    registry.on('list', (event: TriggerEvent<NonNullable<typeof prisma>, 'list', any>) => {
-      receivedNotifications[channels.list].push(event);
-    });
+    registry!.on(
+      'list',
+      (event: TriggerEvent<NonNullable<typeof prisma>, 'list', any>) => {
+        receivedNotifications[channels.list].push(event);
+      }
+    );
 
-    registry.on('uwU', (event: TriggerEvent<NonNullable<typeof prisma>, 'uwU', any>) => {
-      receivedNotifications[channels.uwu].push(event);
-    });
+    registry!.on(
+      'uwU',
+      (event: TriggerEvent<NonNullable<typeof prisma>, 'uwU', any>) => {
+        receivedNotifications[channels.uwu].push(event);
+      }
+    );
 
     // Setup database and start listening
-    await registry.setup();
-    await registry.listen();
+    await registry!.setup();
+    await registry!.listen();
 
     // Perform database operations to trigger events
 
     // Create a user and list first
     const user = await prisma!.user.create({
       data: {
-        email: `test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}@example.com`,
+        email: `test-${Date.now()}-${Math.random()
+          .toString(36)
+          .substring(2, 11)}@example.com`,
         name: 'Test User'
       }
     });
@@ -177,12 +239,14 @@ describe('Notification Registry and Unified Subscription', () => {
     });
 
     // Create a list with owner
-    const list2 = await prisma!.list.create({
+    await prisma!.list.create({
       data: {
         name: 'Test List',
         owner: {
           create: {
-            email: `test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}@example.com`,
+            email: `test-${Date.now()}-${Math.random()
+              .toString(36)
+              .substring(2, 11)}@example.com`,
             name: 'Test User'
           }
         }
@@ -290,7 +354,7 @@ describe('Notification Registry and Unified Subscription', () => {
 
     // Create a simple registry for this test
     registry = triggerManager.registry();
-    registry.add('item', {
+    registry!.add('item', {
       name: 'item_registry_trigger',
       events: ['INSERT'],
       timing: 'AFTER',
@@ -302,17 +366,19 @@ describe('Notification Registry and Unified Subscription', () => {
     activeTriggerNames = ['item_registry_trigger'];
 
     let handlerCallCount = 0;
-    const testHandler = (event: TriggerEvent<NonNullable<typeof prisma>, 'item', any>) => {
+    const testHandler = (
+      event: TriggerEvent<NonNullable<typeof prisma>, 'item', any>
+    ) => {
       handlerCallCount++;
       receivedNotifications[channelName].push(event);
     };
 
     // Add the handler
-    const unsubscribe = registry.on('item', testHandler);
+    const unsubscribe = registry!.on('item', testHandler);
 
     // Setup and start listening
-    await registry.setup();
-    await registry.listen();
+    await registry!.setup();
+    await registry!.listen();
 
     // Create a list first
     const list = await prisma!.list.create({
@@ -320,7 +386,9 @@ describe('Notification Registry and Unified Subscription', () => {
         name: 'Test List for Off',
         owner: {
           create: {
-            email: `test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}@example.com`,
+            email: `test-${Date.now()}-${Math.random()
+              .toString(36)
+              .substring(2, 11)}@example.com`,
             name: 'Test User 2'
           }
         }
@@ -384,7 +452,7 @@ describe('Notification Registry and Unified Subscription', () => {
     registry = triggerManager.registry();
 
     // Add a model with a custom trigger that uses conditional logic
-    registry.add('item', {
+    registry!.add('item', {
       name: 'item_special_trigger',
       events: ['INSERT'],
       timing: 'AFTER',
@@ -397,20 +465,23 @@ describe('Notification Registry and Unified Subscription', () => {
     activeTriggerNames = ['item_special_trigger'];
 
     // Set up handler for custom trigger
-    registry.on('item', (event: TriggerEvent<NonNullable<typeof prisma>, 'item', any>) => {
-      console.log(
-        '*** HANDLER CALLED ***',
-        event.operation,
-        event.data?.name
-      );
-      receivedNotifications[channelName].push(event);
-    });
+    registry!.on(
+      'item',
+      (event: TriggerEvent<NonNullable<typeof prisma>, 'item', any>) => {
+        console.log(
+          '*** HANDLER CALLED ***',
+          event.operation,
+          event.data?.name
+        );
+        receivedNotifications[channelName].push(event);
+      }
+    );
 
     console.log('=== DEBUG INFO ===');
     console.log('Channel name:', channelName);
-    await registry.setup();
-    await registry.listen();
-    console.log('Registry status:', registry.getStatus());
+    await registry!.setup();
+    await registry!.listen();
+    console.log('Registry status:', registry!.getStatus());
 
     // Create a list first
     const list = await prisma!.list.create({
@@ -418,7 +489,9 @@ describe('Notification Registry and Unified Subscription', () => {
         name: 'Test List for Special',
         owner: {
           create: {
-            email: `test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}@example.com`,
+            email: `test-${Date.now()}-${Math.random()
+              .toString(36)
+              .substring(2, 11)}@example.com`,
             name: 'Test User 3'
           }
         }
@@ -460,5 +533,187 @@ describe('Notification Registry and Unified Subscription', () => {
     );
     expect(receivedNotifications[channelName].length).toBe(1);
     expect(receivedNotifications[channelName][0].operation).toBe('INSERT');
+  });
+
+  test('should support defining triggers with custom IDs and listening to specific ones', async () => {
+    // Create trigger manager
+    triggerManager = createTriggers<NonNullable<typeof prisma>>(
+      process.env.DATABASE_URL!
+    );
+
+    const channelPrefix = `enhanced_${testId}`;
+    const channels = {
+      created: `${channelPrefix}_created`,
+      statusChanged: `${channelPrefix}_status_changed`,
+      completed: `${channelPrefix}_completed`
+    };
+
+    // Initialize notification tracking
+    receivedNotifications[channels.created] = [];
+    receivedNotifications[channels.statusChanged] = [];
+    receivedNotifications[channels.completed] = [];
+
+    // Create registry with specific trigger IDs
+    registry = triggerManager
+      .registry()
+      .define('item_created', {
+        model: 'item',
+        events: ['INSERT'],
+        timing: 'AFTER',
+        forEach: 'ROW',
+        notify: channels.created
+      })
+      .define('item_status_changed', {
+        model: 'item',
+        events: ['UPDATE'],
+        timing: 'AFTER',
+        forEach: 'ROW',
+        when: (c) => c.changed('status'),
+        notify: channels.statusChanged
+      })
+      .define('item_completed', {
+        model: 'item',
+        events: ['UPDATE'],
+        timing: 'AFTER',
+        forEach: 'ROW',
+        when: (c) =>
+          c.and(
+            c.OLD('status').ne('COMPLETED'),
+            c.NEW('status').eq('COMPLETED')
+          ),
+        notify: channels.completed
+      });
+
+    // Track the actual trigger names for cleanup
+    activeTriggerNames = [
+      'item_created_trigger',
+      'item_status_changed_trigger',
+      'item_completed_trigger'
+    ];
+
+    // Subscribe to specific triggers by ID
+    registry!.on('item_created', (event) => {
+      receivedNotifications[channels.created].push(event);
+    });
+
+    registry!.on('item_status_changed', (event) => {
+      receivedNotifications[channels.statusChanged].push(event);
+    });
+
+    registry!.on('item_completed', (event) => {
+      receivedNotifications[channels.completed].push(event);
+    });
+
+    // Setup and listen
+    await registry!.setup();
+    await registry!.listen();
+
+    // Create user and list
+    const user = await prisma!.user.create({
+      data: {
+        email: `test-${Date.now()}-${Math.random()
+          .toString(36)
+          .substring(2, 11)}@example.com`,
+        name: 'Test User'
+      }
+    });
+
+    const list = await prisma!.list.create({
+      data: {
+        name: 'Test List',
+        ownerId: user.id
+      }
+    });
+
+    // Test 1: Create item - should trigger item_created
+    const item = await prisma!.item.create({
+      data: {
+        name: 'Test Item',
+        status: 'PENDING',
+        listId: list.id
+      }
+    });
+
+    await waitForCondition(
+      () => receivedNotifications[channels.created].length >= 1,
+      2000
+    );
+    expect(receivedNotifications[channels.created].length).toBe(1);
+    expect(receivedNotifications[channels.created][0].data.id).toBe(item.id);
+
+    // Test 2: Update name only - should NOT trigger status_changed
+    await prisma!.item.update({
+      where: { id: item.id },
+      data: { name: 'Updated Name' }
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(receivedNotifications[channels.statusChanged].length).toBe(0);
+
+    // Test 3: Update status to IN_PROGRESS - should trigger status_changed but NOT completed
+    await prisma!.item.update({
+      where: { id: item.id },
+      data: { status: 'IN_PROGRESS' }
+    });
+
+    await waitForCondition(
+      () => receivedNotifications[channels.statusChanged].length >= 1,
+      2000
+    );
+    expect(receivedNotifications[channels.statusChanged].length).toBe(1);
+    expect(receivedNotifications[channels.completed].length).toBe(0);
+
+    // Test 4: Update status to COMPLETED - should trigger both status_changed AND completed
+    await prisma!.item.update({
+      where: { id: item.id },
+      data: { status: 'COMPLETED' }
+    });
+
+    await waitForCondition(
+      () =>
+        receivedNotifications[channels.statusChanged].length >= 2 &&
+        receivedNotifications[channels.completed].length >= 1,
+      2000
+    );
+    expect(receivedNotifications[channels.statusChanged].length).toBe(2);
+    expect(receivedNotifications[channels.completed].length).toBe(1);
+    expect(receivedNotifications[channels.completed][0].data.status).toBe(
+      'COMPLETED'
+    );
+  });
+
+  test('registry should provide list of all trigger IDs', async () => {
+    // Create trigger manager
+    triggerManager = createTriggers<NonNullable<typeof prisma>>(
+      process.env.DATABASE_URL!
+    );
+
+    // Create registry with multiple triggers
+    registry = triggerManager
+      .registry()
+      .define('trigger_one', {
+        model: 'item',
+        events: ['INSERT'],
+        timing: 'AFTER',
+        notify: 'channel_one'
+      })
+      .define('trigger_two', {
+        model: 'user',
+        events: ['UPDATE'],
+        timing: 'AFTER',
+        notify: 'channel_two'
+      })
+      .define('trigger_three', {
+        model: 'list',
+        events: ['DELETE'],
+        timing: 'BEFORE',
+        notify: 'channel_three'
+      });
+
+    const triggerIds = registry!.getTriggerIds();
+    expect(triggerIds).toContain('trigger_one');
+    expect(triggerIds).toContain('trigger_two');
+    expect(triggerIds).toContain('trigger_three');
+    expect(triggerIds.length).toBe(3);
   });
 });

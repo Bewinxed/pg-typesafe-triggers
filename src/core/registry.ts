@@ -6,15 +6,19 @@ import {
   RegistryStatus,
   TriggerHandle,
   TriggerConfig,
+  TriggerDefinition,
   TriggerEvent,
   ModelName,
   TriggerOperation
 } from '../types';
 
-export class TriggerRegistry<Client> implements Registry<Client> {
+export class TriggerRegistry<Client, TriggerMap = {}>
+  implements Registry<Client, TriggerMap>
+{
   private triggers = new Map<string, TriggerHandle<Client, any>>();
   private connectionManager: ConnectionManager;
   private modelToTriggerMap = new Map<string, Set<string>>();
+  private triggerIdToModel = new Map<string, string>();
   private handlers = new Map<
     string,
     Set<(event: any) => void | Promise<void>>
@@ -24,11 +28,11 @@ export class TriggerRegistry<Client> implements Registry<Client> {
     this.connectionManager = connectionManager;
   }
 
-  // src/core/registry.ts
+  // Original add method - still works with models
   add<M extends ModelName<Client>>(
     modelOrTrigger: M | TriggerHandle<Client, any>,
-    config?: Omit<TriggerConfig<Client, M>, 'model'> // <-- Require all props except model
-  ): this {
+    config?: Omit<TriggerConfig<Client, M>, 'model'>
+  ): Registry<Client, TriggerMap> {
     if (typeof modelOrTrigger === 'string') {
       if (!config) {
         throw new Error('Config is required when adding by model name');
@@ -40,36 +44,72 @@ export class TriggerRegistry<Client> implements Registry<Client> {
       } as TriggerConfig<Client, M>;
 
       const trigger = new BaseTrigger(fullConfig, this.connectionManager);
-      this.addTrigger(trigger);
+      const triggerId = this.generateTriggerId(modelOrTrigger, config);
+      this.addTrigger(triggerId, trigger);
     } else {
-      this.addTrigger(modelOrTrigger);
+      // Generate ID from trigger config
+      const trigger = modelOrTrigger;
+      const model = String(trigger.config.model);
+      const triggerId = this.generateTriggerId(model, trigger.config);
+      this.addTrigger(triggerId, trigger);
     }
 
     return this;
   }
 
-  private addTrigger(trigger: TriggerHandle<Client, any>): void {
-    const model = String(trigger.config.model);
-    const triggerKey = `${model}_${trigger.config.name}`;
+  // New define method - returns Registry with updated type
+  define<ID extends string, M extends ModelName<Client>>(
+    id: ID,
+    definition: TriggerDefinition<Client, M>
+  ): Registry<
+    Client,
+    TriggerMap & { [K in ID]: TriggerEvent<Client, M, TriggerOperation> }
+  > {
+    const fullConfig: TriggerConfig<Client, M> = {
+      ...definition,
+      name: definition.name || `${id}_trigger`,
+      functionName: definition.functionName || `${id}_func`,
+      functionArgs: definition.functionArgs || [],
+      forEach: definition.forEach || 'ROW'
+    } as TriggerConfig<Client, M>;
 
-    this.triggers.set(triggerKey, trigger);
+    const trigger = new BaseTrigger(fullConfig, this.connectionManager);
+    this.addTrigger(id, trigger);
+
+    // Map the ID to the model for onModel functionality
+    this.triggerIdToModel.set(id, String(definition.model));
+
+    // Return this with updated type
+    return this as any;
+  }
+
+  private generateTriggerId(model: string, config: any): string {
+    if (config.name) {
+      return `${model}_${config.name}`;
+    }
+    const events = config.events?.join('_').toLowerCase() || 'trigger';
+    return `${model}_${events}`;
+  }
+
+  private addTrigger(
+    triggerId: string,
+    trigger: TriggerHandle<Client, any>
+  ): void {
+    const model = String(trigger.config.model);
+
+    this.triggers.set(triggerId, trigger);
 
     // Track model to trigger mapping
     if (!this.modelToTriggerMap.has(model)) {
       this.modelToTriggerMap.set(model, new Set());
     }
-    this.modelToTriggerMap.get(model)!.add(triggerKey);
+    this.modelToTriggerMap.get(model)!.add(triggerId);
+
+    // Track trigger ID to model mapping
+    this.triggerIdToModel.set(triggerId, model);
 
     // Attach to registry
-    trigger.attachToRegistry(this);
-  }
-
-  private generateFunctionName(
-    model: string,
-    events: TriggerOperation[]
-  ): string {
-    const eventStr = events.join('_').toLowerCase();
-    return `${model}_${eventStr}_registry_func`;
+    trigger.attachToRegistry(this as any);
   }
 
   async setup(): Promise<void> {
@@ -110,10 +150,53 @@ export class TriggerRegistry<Client> implements Registry<Client> {
     // Clear internal state
     this.triggers.clear();
     this.modelToTriggerMap.clear();
+    this.triggerIdToModel.clear();
     this.handlers.clear();
   }
 
+  // Type-safe on method with overloads
+  on<K extends keyof TriggerMap>(
+    triggerId: K,
+    handler: (event: TriggerMap[K]) => void | Promise<void>
+  ): () => void;
   on<M extends ModelName<Client>>(
+    model: M,
+    handler: (
+      event: TriggerEvent<Client, M, TriggerOperation>
+    ) => void | Promise<void>
+  ): () => void;
+  on(
+    idOrModel: string,
+    handler: (event: any) => void | Promise<void>
+  ): () => void {
+    // Check if it's a trigger ID first
+    const trigger = this.triggers.get(idOrModel);
+
+    if (trigger) {
+      // It's a specific trigger ID
+      const unsubscribe = trigger.subscribe(handler);
+
+      // Track handler
+      if (!this.handlers.has(idOrModel)) {
+        this.handlers.set(idOrModel, new Set());
+      }
+      this.handlers.get(idOrModel)!.add(handler);
+
+      return () => {
+        unsubscribe();
+        const idHandlers = this.handlers.get(idOrModel);
+        if (idHandlers) {
+          idHandlers.delete(handler);
+        }
+      };
+    }
+
+    // Otherwise, treat it as a model name
+    return this.onModel(idOrModel as any, handler);
+  }
+
+  // Listen to all triggers for a model
+  onModel<M extends ModelName<Client>>(
     model: M,
     handler: (
       event: TriggerEvent<Client, M, TriggerOperation>
@@ -122,16 +205,16 @@ export class TriggerRegistry<Client> implements Registry<Client> {
     const modelStr = String(model);
 
     // Get all triggers for this model
-    const triggerKeys = this.modelToTriggerMap.get(modelStr);
-    if (!triggerKeys) {
+    const triggerIds = this.modelToTriggerMap.get(modelStr);
+    if (!triggerIds) {
       throw new Error(`No triggers registered for model: ${modelStr}`);
     }
 
     // Subscribe to all triggers for this model
     const unsubscribes: Array<() => void> = [];
 
-    for (const triggerKey of triggerKeys) {
-      const trigger = this.triggers.get(triggerKey);
+    for (const triggerId of triggerIds) {
+      const trigger = this.triggers.get(triggerId);
       if (trigger) {
         const unsubscribe = trigger.subscribe(handler as any);
         unsubscribes.push(unsubscribe);
@@ -152,6 +235,11 @@ export class TriggerRegistry<Client> implements Registry<Client> {
         modelHandlers.delete(handler as any);
       }
     };
+  }
+
+  // Get all registered trigger IDs
+  getTriggerIds(): string[] {
+    return Array.from(this.triggers.keys());
   }
 
   getStatus(): RegistryStatus {
@@ -175,56 +263,5 @@ export class TriggerRegistry<Client> implements Registry<Client> {
       isSetup,
       isListening
     };
-  }
-
-  // Builder pattern support
-  define<M extends ModelName<Client>>(
-    model: M,
-    events?: TriggerOperation[]
-  ): RegistryBuilder<Client, M> {
-    return new RegistryBuilder(this, model, events);
-  }
-}
-
-// Helper class for fluent registry building
-class RegistryBuilder<Client, M extends ModelName<Client>> {
-  constructor(
-    private registry: TriggerRegistry<Client>,
-    private model: M,
-    private events?: TriggerOperation[]
-  ) {}
-
-  withTiming(timing: 'BEFORE' | 'AFTER' | 'INSTEAD OF'): this {
-    // Store config for later
-    (this as any)._timing = timing;
-    return this;
-  }
-
-  forEach(value: 'ROW' | 'STATEMENT'): this {
-    (this as any)._forEach = value;
-    return this;
-  }
-
-  when(condition: string | ((records: any) => boolean)): this {
-    (this as any)._when = condition;
-    return this;
-  }
-
-  notify(channel: string): this {
-    (this as any)._notify = channel;
-    return this;
-  }
-
-  done(): TriggerRegistry<Client> {
-    const config: Partial<TriggerConfig<Client, M>> = {
-      timing: (this as any)._timing || 'AFTER',
-      events: this.events || ['INSERT', 'UPDATE', 'DELETE'],
-      forEach: (this as any)._forEach || 'ROW',
-      when: (this as any)._when,
-      notify: (this as any)._notify
-    };
-
-    this.registry.add(this.model, config as any);
-    return this.registry;
   }
 }

@@ -8,7 +8,6 @@ export interface Condition {
 }
 
 // Field reference that's properly typed
-// src/core/conditions.ts
 export class FieldRef<
   Client,
   M extends ModelName<Client>,
@@ -20,48 +19,52 @@ export class FieldRef<
     private _phantom?: FieldType<Client, M, F> // For type inference
   ) {}
 
-  eq(value: FieldType<Client, M, F>): Comparison<Client, M, F> {
+  eq(
+    value: FieldType<Client, M, F> | FieldRef<Client, M, any>
+  ): Comparison<Client, M, F> {
     return new Comparison(this, '=', value);
   }
 
-  ne(value: FieldType<Client, M, F>): Comparison<Client, M, F> {
+  ne(
+    value: FieldType<Client, M, F> | FieldRef<Client, M, any>
+  ): Comparison<Client, M, F> {
     return new Comparison(this, '<>', value);
   }
 
   gt(
-    value: FieldType<Client, M, F> extends number
-      ? FieldType<Client, M, F>
+    value: NonNullable<FieldType<Client, M, F>> extends number | Date | string
+      ? FieldType<Client, M, F> | FieldRef<Client, M, any>
       : never
   ): Comparison<Client, M, F> {
     return new Comparison(this, '>', value);
   }
 
   gte(
-    value: FieldType<Client, M, F> extends number
-      ? FieldType<Client, M, F>
+    value: NonNullable<FieldType<Client, M, F>> extends number | Date | string
+      ? FieldType<Client, M, F> | FieldRef<Client, M, any>
       : never
   ): Comparison<Client, M, F> {
     return new Comparison(this, '>=', value);
   }
 
   lt(
-    value: FieldType<Client, M, F> extends number
-      ? FieldType<Client, M, F>
+    value: NonNullable<FieldType<Client, M, F>> extends number | Date | string
+      ? FieldType<Client, M, F> | FieldRef<Client, M, any>
       : never
   ): Comparison<Client, M, F> {
     return new Comparison(this, '<', value);
   }
 
   lte(
-    value: FieldType<Client, M, F> extends number
-      ? FieldType<Client, M, F>
+    value: NonNullable<FieldType<Client, M, F>> extends number | Date | string
+      ? FieldType<Client, M, F> | FieldRef<Client, M, any>
       : never
   ): Comparison<Client, M, F> {
     return new Comparison(this, '<=', value);
   }
 
   like(
-    value: FieldType<Client, M, F> extends string ? string : never
+    value: NonNullable<FieldType<Client, M, F>> extends string ? string : never
   ): Comparison<Client, M, F> {
     return new Comparison(this, 'LIKE', value);
   }

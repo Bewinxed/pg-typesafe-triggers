@@ -32,6 +32,9 @@ export type {
   WithTimingState
 } from './core/trigger-builder';
 
+// Export registry type for external usage
+export { TriggerRegistry } from './core/registry';
+
 // Main class that provides both APIs
 export class TriggerManager<Client> {
   private connectionManager: ConnectionManager;
@@ -67,15 +70,15 @@ export class TriggerManager<Client> {
   /**
    * Create a registry for managing multiple triggers
    */
-  registry(): Registry<Client> {
-    return new TriggerRegistry(this.connectionManager);
+  registry(): Registry<Client, {}> {
+    return new TriggerRegistry<Client, {}>(this.connectionManager);
   }
 
   /**
    * Create a registry with initial definitions
    */
-  createRegistry(): Registry<Client> {
-    return new TriggerRegistry(this.connectionManager);
+  createRegistry(): Registry<Client, {}> {
+    return new TriggerRegistry<Client, {}>(this.connectionManager);
   }
 
   /**
@@ -121,7 +124,6 @@ export function createTriggers<Client>(
 export { BaseTrigger } from './core/base-trigger';
 export { ConnectionManager } from './core/connection-manager';
 export { MigrationHelper } from './core/migration-helpers';
-export { TriggerRegistry } from './core/registry';
 export {
   buildWhereCondition,
   type ConditionEvaluator

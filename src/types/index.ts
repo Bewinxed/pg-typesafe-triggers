@@ -85,7 +85,7 @@ export type WhenRecords<
   ? {}
   : never;
 
-// src/types/index.ts - Fix the BuilderState and TriggerConfig alignment
+// Builder state
 interface BuilderState<Client, M extends ModelName<Client> = any> {
   model?: M;
   name?: string;
@@ -93,12 +93,12 @@ interface BuilderState<Client, M extends ModelName<Client> = any> {
   events?: TriggerOperation[];
   forEach?: TriggerForEach;
   watchColumns?: Array<ModelField<Client, M>>;
-  when?: string | ((c: ConditionBuilder<Client, M>) => Condition); // Align with TriggerConfig
+  when?: string | ((c: ConditionBuilder<Client, M>) => Condition);
   functionName?: string;
   functionArgs?: string[];
   notify?: string;
 }
-// src/types/index.ts - Add field type extraction
+
 // Extract the type of a specific field
 export type FieldType<
   Client,
@@ -117,8 +117,6 @@ export type FieldType<
   : never;
 
 // Trigger configuration
-// In src/types/index.ts - update TriggerConfig
-// src/types/index.ts
 export type TriggerConfig<
   Client,
   M extends ModelName<Client>,
@@ -131,9 +129,20 @@ export type TriggerConfig<
   forEach: TriggerForEach;
   functionName: string;
   watchColumns?: 'UPDATE' extends E ? Array<ModelField<Client, M>> : never;
-  when?: string | ((c: ConditionBuilder<Client, M>) => Condition); // Remove ConditionEvaluator here
+  when?: string | ((c: ConditionBuilder<Client, M>) => Condition);
   notify?: string;
   functionArgs?: string[];
+};
+
+// Trigger definition for registry
+export type TriggerDefinition<Client, M extends ModelName<Client>> = Omit<
+  TriggerConfig<Client, M>,
+  'model' | 'name' | 'functionName' | 'forEach'
+> & {
+  model: M;
+  name?: string;
+  functionName?: string;
+  forEach?: TriggerForEach;
 };
 
 // Trigger handle interface
@@ -156,18 +165,35 @@ export interface TriggerHandle<Client, M extends ModelName<Client>> {
   attachToRegistry(registry: Registry<Client>): void;
 }
 
-// Registry interface
-export interface Registry<Client> {
+// Registry interface with both model-level and trigger-level subscriptions
+export interface Registry<Client, TriggerMap = {}> {
+  // Original methods
   add<M extends ModelName<Client>>(
     modelOrTrigger: M | TriggerHandle<Client, any>,
     config?: Omit<TriggerConfig<Client, M>, 'model'>
-  ): this;
+  ): Registry<Client, TriggerMap>;
+
+  // New method for defining triggers with IDs - returns new Registry with updated type
+  define<ID extends string, M extends ModelName<Client>>(
+    id: ID,
+    definition: TriggerDefinition<Client, M>
+  ): Registry<
+    Client,
+    TriggerMap & { [K in ID]: TriggerEvent<Client, M, TriggerOperation> }
+  >;
 
   setup(): Promise<void>;
   listen(): Promise<void>;
   stop(): Promise<void>;
   drop(): Promise<void>;
 
+  // Listen to specific trigger by ID with full type safety
+  on<K extends keyof TriggerMap>(
+    triggerId: K,
+    handler: (event: TriggerMap[K]) => void | Promise<void>
+  ): () => void;
+
+  // Overload for model names (backward compatibility)
   on<M extends ModelName<Client>>(
     model: M,
     handler: (
@@ -175,7 +201,16 @@ export interface Registry<Client> {
     ) => void | Promise<void>
   ): () => void;
 
+  // Listen to all triggers for a model
+  onModel<M extends ModelName<Client>>(
+    model: M,
+    handler: (
+      event: TriggerEvent<Client, M, TriggerOperation>
+    ) => void | Promise<void>
+  ): () => void;
+
   getStatus(): RegistryStatus;
+  getTriggerIds(): string[];
 }
 
 // Status types

@@ -1,4 +1,4 @@
-// examples/quick-start.ts
+// examples/usage.ts
 import { PrismaClient } from '@prisma/client';
 import { createTriggers } from '../src';
 
@@ -33,7 +33,207 @@ async function simplestExample() {
 }
 
 // ============================================
-// 2. WATCH SPECIFIC CHANGES
+// 2. ENHANCED REGISTRY WITH SPECIFIC TRIGGERS
+// ============================================
+
+async function enhancedRegistryExample() {
+  // Create a registry with specific, named triggers
+  const registry = triggers
+    .registry()
+    // Item-specific triggers
+    .define('item_created', {
+      model: 'item',
+      events: ['INSERT'],
+      timing: 'AFTER',
+      forEach: 'ROW',
+      notify: 'item_created'
+    })
+    .define('item_status_changed', {
+      model: 'item',
+      events: ['UPDATE'],
+      timing: 'AFTER',
+      when: (c) => c.changed('status'),
+      notify: 'item_status_updates'
+    })
+    .define('item_completed', {
+      model: 'item',
+      events: ['UPDATE'],
+      timing: 'AFTER',
+      when: (c) =>
+        c.and(c.OLD('status').ne('COMPLETED'), c.NEW('status').eq('COMPLETED')),
+      notify: 'item_completions'
+    })
+    .define('high_priority_items', {
+      model: 'item',
+      events: ['INSERT', 'UPDATE'],
+      timing: 'AFTER',
+      when: (c) => c.NEW('priority').gte(4),
+      notify: 'priority_alerts'
+    })
+    // User-specific triggers
+    .define('user_signup', {
+      model: 'user',
+      events: ['INSERT'],
+      timing: 'AFTER',
+      notify: 'new_users'
+    })
+    .define('user_email_changed', {
+      model: 'user',
+      events: ['UPDATE'],
+      timing: 'AFTER',
+      when: (c) => c.changed('email'),
+      notify: 'email_changes'
+    })
+    .define('user_deactivated', {
+      model: 'user',
+      events: ['UPDATE'],
+      timing: 'AFTER',
+      when: (c) => c.and(c.OLD('active').eq(true), c.NEW('active').eq(false)),
+      notify: 'user_deactivations'
+    })
+    // List-specific triggers
+    .define('list_item_count_changed', {
+      model: 'list',
+      events: ['UPDATE'],
+      timing: 'AFTER',
+      when: (c) => c.changed('itemCount'),
+      notify: 'list_updates'
+    });
+
+  // Set up all triggers
+  await registry.setup();
+  await registry.listen();
+
+  // Now you can listen to SPECIFIC triggers by their ID!
+  registry.on('item_created', (event) => {
+    console.log(`New item created: ${event.data.name}`);
+    // Send welcome email, initialize related data, etc.
+  });
+
+  registry.on('item_status_changed', (event) => {
+    console.log(`Item ${event.data.id} status: ${event.data.status}`);
+    // Update related systems, send notifications
+  });
+
+  registry.on('item_completed', async (event) => {
+    console.log(`Item completed: ${event.data.name}`);
+    // Update metrics, send completion notification
+    await updateCompletionMetrics(event.data);
+    await notifyAssignee(event.data);
+  });
+
+  registry.on('high_priority_items', async (event) => {
+    console.log(`HIGH PRIORITY: ${event.data.name} (P${event.data.priority})`);
+    // Page on-call, send urgent notifications
+    await pageOnCall(event.data);
+  });
+
+  registry.on('user_signup', async (event) => {
+    console.log(`Welcome new user: ${event.data.email}`);
+    await sendWelcomeEmail(event.data);
+    await createUserDefaults(event.data);
+  });
+
+  // You can still listen to ALL events for a model if needed
+  registry.onModel('item', (event) => {
+    console.log(`Any item event: ${event.operation} on ${event.data.id}`);
+    // Log all item changes for audit trail
+  });
+
+  // Get all trigger IDs (useful for debugging/monitoring)
+  const triggerIds = registry.getTriggerIds();
+  console.log('Registered triggers:', triggerIds);
+}
+
+// ============================================
+// 3. BUSINESS LOGIC EXAMPLE
+// ============================================
+
+async function businessLogicExample() {
+  const registry = triggers
+    .registry()
+    // Item lifecycle
+    .define('item_created', {
+      model: 'item',
+      events: ['INSERT'],
+      timing: 'AFTER',
+      notify: 'item_created'
+    })
+    .define('item_assigned', {
+      model: 'item',
+      events: ['UPDATE'],
+      timing: 'AFTER',
+      when: (c) =>
+        c.and(c.OLD('assigneeId').isNull(), c.NEW('assigneeId').isNotNull()),
+      notify: 'item_assigned'
+    })
+    .define('item_priority_raised', {
+      model: 'item',
+      events: ['UPDATE'],
+      timing: 'AFTER',
+      when: (c) => c.NEW('priority').gt(c.OLD('priority')),
+      notify: 'priority_raised'
+    })
+    .define('item_overdue', {
+      model: 'item',
+      events: ['UPDATE'],
+      timing: 'AFTER',
+      when: (c) =>
+        c.and(c.NEW('dueDate').lt(new Date()), c.NEW('status').ne('COMPLETED')),
+      notify: 'item_overdue'
+    })
+    // List management
+    .define('list_archived', {
+      model: 'list',
+      events: ['UPDATE'],
+      timing: 'AFTER',
+      when: (c) =>
+        c.and(c.OLD('archivedAt').isNull(), c.NEW('archivedAt').isNotNull()),
+      notify: 'list_archived'
+    })
+    .define('list_published', {
+      model: 'list',
+      events: ['UPDATE'],
+      timing: 'AFTER',
+      when: (c) =>
+        c.and(c.OLD('isPublic').eq(false), c.NEW('isPublic').eq(true)),
+      notify: 'list_published'
+    });
+
+  await registry.setup();
+  await registry.listen();
+
+  // Item handlers
+  registry.on('item_created', async (event) => {
+    await createActivity(event.data, 'CREATED');
+    await updateListItemCount(event.data.listId);
+  });
+
+  registry.on('item_assigned', async (event) => {
+    await notifyAssignee(event.data);
+    await createActivity(event.data, 'ASSIGNED');
+  });
+
+  registry.on('item_priority_raised', async (event) => {
+    if (event.data.priority >= 4) {
+      await sendUrgentNotification(event.data);
+    }
+  });
+
+  // List handlers
+  registry.on('list_archived', async (event) => {
+    await archiveAllItems(event.data.id);
+    await notifyListOwner(event.data);
+  });
+
+  registry.on('list_published', async (event) => {
+    await indexForSearch(event.data);
+    await notifySubscribers(event.data);
+  });
+}
+
+// ============================================
+// 4. WATCH SPECIFIC CHANGES
 // ============================================
 
 async function watchSpecificChanges() {
@@ -75,7 +275,7 @@ async function watchSpecificChanges() {
 }
 
 // ============================================
-// 3. REAL-TIME UPDATES
+// 5. REAL-TIME UPDATES
 // ============================================
 
 async function realtimeUpdates() {
@@ -102,7 +302,7 @@ async function realtimeUpdates() {
 }
 
 // ============================================
-// 4. AUDIT LOGGING
+// 6. AUDIT LOGGING
 // ============================================
 
 async function auditLogging() {
@@ -144,7 +344,7 @@ async function auditLogging() {
 }
 
 // ============================================
-// 5. BUSINESS RULES
+// 7. BUSINESS RULES
 // ============================================
 
 async function businessRules() {
@@ -178,117 +378,31 @@ async function businessRules() {
   await preventDeleteTrigger.setup();
 }
 
-// ============================================
-// 6. MANAGE MULTIPLE TRIGGERS
-// ============================================
-
-async function multipleTriggersWithRegistry() {
-  // Set up multiple triggers at once
-  const registry = triggers
-    .registry()
-    .add('user', {
-      events: ['INSERT', 'UPDATE', 'DELETE'],
-      timing: 'AFTER',
-      forEach: 'ROW',
-      functionName: 'notify_user_changes',
-      notify: 'user_events'
-    })
-    .add('list', {
-      events: ['INSERT', 'UPDATE', 'DELETE'],
-      timing: 'AFTER',
-      forEach: 'ROW',
-      functionName: 'notify_list_changes',
-      notify: 'list_events'
-    })
-    .add('item', {
-      events: ['INSERT', 'UPDATE', 'DELETE'],
-      timing: 'AFTER',
-      forEach: 'ROW',
-      functionName: 'notify_item_changes',
-      notify: 'item_events'
-    });
-
-  // Set up all triggers
-  await registry.setup();
-  await registry.listen();
-
-  // Handle events for each model
-  registry.on('user', (event) => {
-    console.log('User event:', event.operation, event.data.email);
-  });
-
-  registry.on('list', (event) => {
-    console.log('List event:', event.operation, event.data.name);
-  });
-
-  registry.on('item', (event) => {
-    console.log('Item event:', event.operation, event.data.name);
-  });
-}
-
-// ============================================
-// COMMON PATTERNS
-// ============================================
-
-async function commonPatterns() {
-  // 1. Soft delete cascade
-  const softDeleteCascade = triggers
-    .for('user')
-    .withName('soft_delete_cascade')
-    .after()
-    .on('UPDATE')
-    .when(({ NEW, OLD }) => OLD.deletedAt === null && NEW.deletedAt !== null)
-    .notify('user_soft_deleted')
-    .build();
-
-  // 2. Update timestamps
-  const updateTimestamp = triggers
-    .for('item')
-    .withName('update_timestamp')
-    .before()
-    .on('UPDATE')
-    .executeFunction('update_modified_time')
-    .build();
-
-  // 3. Maintain counts
-  const maintainCounts = triggers
-    .for('item')
-    .withName('maintain_list_counts')
-    .after()
-    .on('INSERT', 'DELETE')
-    .executeFunction('update_list_item_count')
-    .build();
-
-  // 4. Send notifications
-  const sendNotifications = triggers
-    .for('item')
-    .withName('high_priority_notifications')
-    .after()
-    .on('INSERT', 'UPDATE')
-    .when(({ NEW }) => NEW.priority >= 4)
-    .notify('high_priority_items')
-    .build();
-
-  // Set them all up
-  await Promise.all([
-    softDeleteCascade.setup(),
-    updateTimestamp.setup(),
-    maintainCounts.setup(),
-    sendNotifications.setup()
-  ]);
-}
-
 // Utility types for examples
 declare const websocket: {
   broadcast(channel: string, data: any): Promise<void>;
 };
 
+// Mock functions for examples
+async function updateCompletionMetrics(item: any) {}
+async function notifyAssignee(item: any) {}
+async function pageOnCall(item: any) {}
+async function sendWelcomeEmail(user: any) {}
+async function createUserDefaults(user: any) {}
+async function createActivity(entity: any, type: string) {}
+async function updateListItemCount(listId: string) {}
+async function sendUrgentNotification(item: any) {}
+async function archiveAllItems(listId: string) {}
+async function notifyListOwner(list: any) {}
+async function indexForSearch(list: any) {}
+async function notifySubscribers(list: any) {}
+
 export {
   simplestExample,
+  enhancedRegistryExample,
+  businessLogicExample,
   watchSpecificChanges,
   realtimeUpdates,
   auditLogging,
-  businessRules,
-  multipleTriggersWithRegistry,
-  commonPatterns
+  businessRules
 };
