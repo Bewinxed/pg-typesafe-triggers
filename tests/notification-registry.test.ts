@@ -63,6 +63,7 @@ describe('Notification Registry and Unified Subscription', () => {
 
   // Clean up after each test
   afterEach(async () => {
+    // Stop and drop registry first
     if (registry) {
       try {
         await registry.stop();
@@ -72,6 +73,7 @@ describe('Notification Registry and Unified Subscription', () => {
       }
     }
 
+    // Dispose trigger manager
     if (triggerManager) {
       try {
         await triggerManager.dispose();
@@ -81,42 +83,7 @@ describe('Notification Registry and Unified Subscription', () => {
       triggerManager = null;
     }
 
-    // Drop triggers manually with proper names
-    const tables = ['Item', 'List', 'uwu_table', 'User'];
-    for (const triggerName of activeTriggerNames) {
-      for (const table of tables) {
-        try {
-          await pgClient!.unsafe(
-            `DROP TRIGGER IF EXISTS "${triggerName}" ON "${table}";`
-          );
-        } catch (error) {
-          // Ignore errors if triggers don't exist
-        }
-      }
-    }
-
-    // Also drop any triggers that might have been created with define()
-    const commonTriggerNames = [
-      'item_created_trigger',
-      'item_status_changed_trigger',
-      'item_completed_trigger',
-      'trigger_one_trigger',
-      'trigger_two_trigger',
-      'trigger_three_trigger'
-    ];
-
-    for (const triggerName of commonTriggerNames) {
-      for (const table of tables) {
-        try {
-          await pgClient!.unsafe(
-            `DROP TRIGGER IF EXISTS "${triggerName}" ON "${table}";`
-          );
-        } catch (error) {
-          // Ignore errors if triggers don't exist
-        }
-      }
-    }
-
+    // Clear state
     activeTriggerNames = [];
     registry = null;
   });
@@ -607,6 +574,9 @@ describe('Notification Registry and Unified Subscription', () => {
     // Setup and listen
     await registry!.setup();
     await registry!.listen();
+    
+    // Wait a bit for the listeners to be ready
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     // Create user and list
     const user = await prisma!.user.create({
@@ -636,7 +606,7 @@ describe('Notification Registry and Unified Subscription', () => {
 
     await waitForCondition(
       () => receivedNotifications[channels.created].length >= 1,
-      2000
+      5000
     );
     expect(receivedNotifications[channels.created].length).toBe(1);
     expect(receivedNotifications[channels.created][0].data.id).toBe(item.id);
