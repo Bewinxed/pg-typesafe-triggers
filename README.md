@@ -1,5 +1,9 @@
 # 🎯 pg-typesafe-triggers
 
+[![CI](https://github.com/bewinxed/pg-typesafe-triggers/actions/workflows/ci.yml/badge.svg)](https://github.com/bewinxed/pg-typesafe-triggers/actions/workflows/ci.yml)
+[![npm version](https://badge.fury.io/js/pg-typesafe-triggers.svg)](https://badge.fury.io/js/pg-typesafe-triggers)
+[![npm downloads](https://img.shields.io/npm/dm/pg-typesafe-triggers.svg)](https://www.npmjs.com/package/pg-typesafe-triggers)
+
 ![ComfyUI_00006_](https://github.com/user-attachments/assets/8aef8bac-282c-4316-8a59-bc6f17dc5544)
 
 ![TypeScript](https://img.shields.io/badge/typescript-%23007ACC.svg?style=for-the-badge&logo=typescript&logoColor=white)
