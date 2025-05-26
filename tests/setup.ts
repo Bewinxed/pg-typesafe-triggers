@@ -27,6 +27,9 @@ export const receivedNotifications: Record<string, any[]> = {
 // No pg-testdb required - keep it simple!
 beforeAll(async () => {
   console.log('Setting up test environment...');
+  console.log('Environment variables:');
+  console.log('DATABASE_URL:', process.env.DATABASE_URL);
+  console.log('TEST_DATABASE_URL:', process.env.TEST_DATABASE_URL);
 
   try {
     // Use environment variables for connection or fallback to defaults

@@ -40,6 +40,13 @@ jobs:
       - name: Generate Prisma Client
         run: bunx prisma generate
         
+      - name: Wait for PostgreSQL
+        run: |
+          until pg_isready -h localhost -p 5432 -U postgres; do
+            echo "Waiting for postgres..."
+            sleep 2
+          done
+          
       - name: Push schema to database
         run: bunx prisma db push
         env:
