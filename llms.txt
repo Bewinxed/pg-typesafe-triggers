@@ -1,0 +1,30 @@
+# pg-typesafe-triggers
+
+> TypeScript library for creating and managing PostgreSQL triggers with Prisma integration
+
+A type-safe way to create PostgreSQL triggers without writing SQL. Automatically generates trigger functions and integrates with Prisma models, offering real-time notifications when database changes occur.
+
+## Docs
+
+- [README](README.md): Full documentation with installation, usage examples, and API reference
+- [Core Types](src/types/core.ts): Core TypeScript type definitions
+- [Trigger Builder](src/core/trigger-builder.ts): Fluent API implementation
+- [Base Trigger](src/core/base-trigger.ts): Base trigger functionality
+- [Registry](src/core/registry.ts): Registry pattern for managing multiple triggers
+
+## Examples
+
+- [Usage Example](examples/usage.ts): Basic usage patterns and examples
+
+## Guides
+
+- [Individual Triggers](docs/individual-triggers.md): Fine control over single triggers
+- [Registry Pattern](docs/registry-pattern.md): Manage multiple triggers at once
+- [Conditions](docs/conditions.md): Complex trigger logic with type safety
+- [Real-time Events](docs/realtime-events.md): Subscribe to database changes
+- [Common Patterns](docs/patterns.md): Audit logs, workflows, sync
+
+## Optional
+
+- [Tests](tests/): Test suite demonstrating various use cases
+- [Package Info](package.json): Dependencies and scripts
