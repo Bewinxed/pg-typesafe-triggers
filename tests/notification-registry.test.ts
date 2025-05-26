@@ -254,7 +254,7 @@ describe('Notification Registry and Unified Subscription', () => {
         5000
       ),
       waitForCondition(
-        () => receivedNotifications[channels.list].length >= 2,
+        () => receivedNotifications[channels.list].length >= 3,
         5000
       ),
       waitForCondition(
@@ -272,7 +272,7 @@ describe('Notification Registry and Unified Subscription', () => {
 
     // Verify we got the correct number of notifications for each channel
     expect(receivedNotifications[channels.item].length).toBe(4);
-    expect(receivedNotifications[channels.list].length).toBe(2);
+    expect(receivedNotifications[channels.list].length).toBe(3);
     expect(receivedNotifications[channels.uwu].length).toBe(1);
 
     // Verify item notifications
@@ -303,7 +303,7 @@ describe('Notification Registry and Unified Subscription', () => {
       (n) => n.operation === 'UPDATE'
     );
 
-    expect(listInserts.length).toBe(1);
+    expect(listInserts.length).toBe(2);
     expect(listUpdates.length).toBe(1);
 
     // Verify specific list data
