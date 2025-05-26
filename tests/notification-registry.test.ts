@@ -169,6 +169,9 @@ describe('Notification Registry and Unified Subscription', () => {
     await registry!.setup();
     await registry!.listen();
 
+    // Wait for listeners to be fully established
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
     // Perform database operations to trigger events
 
     // Create a user and list first
