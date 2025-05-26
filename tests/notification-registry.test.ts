@@ -1,6 +1,6 @@
 // tests/notification-registry.test.ts
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { prisma, resetNotifications, pgClient } from './setup';
+import { prisma, resetNotifications, pgClient, getDatabaseUrl, ensureDatabase } from './setup';
 import { waitForCondition } from './utils';
 import { TriggerEvent, Registry, createTriggers } from '../src';
 
@@ -103,7 +103,7 @@ describe('Notification Registry and Unified Subscription', () => {
 
     // Create trigger manager
     triggerManager = createTriggers<NonNullable<typeof prisma>>(
-      process.env.DATABASE_URL!
+      getDatabaseUrl()
     );
 
     // Create a registry with channels for all three models
@@ -326,7 +326,7 @@ describe('Notification Registry and Unified Subscription', () => {
 
     // Create trigger manager
     triggerManager = createTriggers<NonNullable<typeof prisma>>(
-      process.env.DATABASE_URL!
+      getDatabaseUrl()
     );
 
     // Create a simple registry for this test
@@ -415,7 +415,7 @@ describe('Notification Registry and Unified Subscription', () => {
   test('should handle custom channels and triggers', async () => {
     // Create trigger manager
     triggerManager = createTriggers<NonNullable<typeof prisma>>(
-      process.env.DATABASE_URL!
+      getDatabaseUrl()
     );
 
     // Use a static channel name that matches what Registry expects
@@ -515,7 +515,7 @@ describe('Notification Registry and Unified Subscription', () => {
   test('should support defining triggers with custom IDs and listening to specific ones', async () => {
     // Create trigger manager
     triggerManager = createTriggers<NonNullable<typeof prisma>>(
-      process.env.DATABASE_URL!
+      getDatabaseUrl()
     );
 
     const channelPrefix = `enhanced_${testId}`;
@@ -665,7 +665,7 @@ describe('Notification Registry and Unified Subscription', () => {
   test('registry should provide list of all trigger IDs', async () => {
     // Create trigger manager
     triggerManager = createTriggers<NonNullable<typeof prisma>>(
-      process.env.DATABASE_URL!
+      getDatabaseUrl()
     );
 
     // Create registry with multiple triggers

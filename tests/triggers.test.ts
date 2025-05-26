@@ -5,7 +5,9 @@ import {
   triggers,
   receivedNotifications,
   resetNotifications,
-  pgClient
+  pgClient,
+  ensureDatabase,
+  getDatabaseUrl
 } from './setup';
 import { waitForNotifications, assertNotificationPayload } from './utils';
 import { createTriggers, TriggerManager, TriggerHandle } from '../src';
@@ -21,9 +23,12 @@ describe('CRUD Triggers', () => {
   beforeEach(async () => {
     resetNotifications();
 
+    // Ensure database is initialized
+    const { prisma: db } = await ensureDatabase();
+    
     // Create a test user first with unique email
     const uniqueEmail = `test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}@example.com`;
-    testUser = await prisma!.user.create({
+    testUser = await db.user.create({
       data: {
         email: uniqueEmail,
         name: 'Test User'
@@ -31,7 +36,7 @@ describe('CRUD Triggers', () => {
     });
 
     // Create a test list
-    testList = await prisma!.list.create({
+    testList = await db.list.create({
       data: {
         name: 'Test List',
         ownerId: testUser.id
@@ -39,7 +44,7 @@ describe('CRUD Triggers', () => {
     });
 
     // Create a test item for update/delete operations
-    testItem = await prisma!.item.create({
+    testItem = await db.item.create({
       data: {
         name: 'Test Item for CRUD',
         status: 'PENDING',
@@ -71,15 +76,17 @@ describe('CRUD Triggers', () => {
     }
 
     // Clear any remaining test data
-    await prisma!.item.deleteMany({});
-    await prisma!.list.deleteMany({});
+    const { prisma: db } = await ensureDatabase();
+    await db.item.deleteMany({});
+    await db.list.deleteMany({});
   });
 
   describe('INSERT Triggers', () => {
     test('basic INSERT trigger should fire on item creation', async () => {
       // Create a FRESH TriggerManager for this test to avoid condition bleeding
+      await ensureDatabase();
       currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
-        process.env.DATABASE_URL!
+        getDatabaseUrl()
       );
 
       // Create function first
@@ -136,7 +143,7 @@ describe('CRUD Triggers', () => {
     test('conditional INSERT trigger should only fire when condition is met', async () => {
       // Create a FRESH TriggerManager for this test
       currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
-        process.env.DATABASE_URL!
+        getDatabaseUrl()
       );
 
       // Create function first
@@ -207,7 +214,7 @@ describe('CRUD Triggers', () => {
     test('INSERT trigger using raw SQL condition should work', async () => {
       // Create a FRESH TriggerManager for this test
       currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
-        process.env.DATABASE_URL!
+        getDatabaseUrl()
       );
 
       // Create function first
@@ -280,7 +287,7 @@ describe('CRUD Triggers', () => {
     test('basic UPDATE trigger should fire on any item update', async () => {
       // Create a FRESH TriggerManager for this test
       currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
-        process.env.DATABASE_URL!
+        getDatabaseUrl()
       );
 
       // Create function first
@@ -337,7 +344,7 @@ describe('CRUD Triggers', () => {
     test('UPDATE trigger should only fire when watched column changes', async () => {
       // Create a FRESH TriggerManager for this test
       currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
-        process.env.DATABASE_URL!
+        getDatabaseUrl()
       );
 
       // Create function first
@@ -402,7 +409,7 @@ describe('CRUD Triggers', () => {
     test('conditional UPDATE trigger should only fire when condition is met', async () => {
       // Create a FRESH TriggerManager for this test
       currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
-        process.env.DATABASE_URL!
+        getDatabaseUrl()
       );
 
       // Create function first
@@ -466,7 +473,7 @@ describe('CRUD Triggers', () => {
     test('UPDATE trigger with field comparison condition should work', async () => {
       // Create a FRESH TriggerManager for this test
       currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
-        process.env.DATABASE_URL!
+        getDatabaseUrl()
       );
 
       // Create function first
@@ -533,7 +540,7 @@ describe('CRUD Triggers', () => {
     test('basic DELETE trigger should fire on item deletion', async () => {
       // Create a FRESH TriggerManager for this test
       currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
-        process.env.DATABASE_URL!
+        getDatabaseUrl()
       );
 
       // Create function first
@@ -595,7 +602,7 @@ describe('CRUD Triggers', () => {
 
       // Create a FRESH TriggerManager for this test
       currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
-        process.env.DATABASE_URL!
+        getDatabaseUrl()
       );
 
       // Create function first
@@ -667,7 +674,7 @@ describe('CRUD Triggers', () => {
 
       // Create a FRESH TriggerManager for this test
       currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
-        process.env.DATABASE_URL!
+        getDatabaseUrl()
       );
 
       // Create function first
@@ -731,7 +738,7 @@ describe('CRUD Triggers', () => {
     test('trigger with multiple events should work for all operations', async () => {
       // Create a FRESH TriggerManager for this test
       currentTriggerManager = createTriggers<NonNullable<typeof prisma>>(
-        process.env.DATABASE_URL!
+        getDatabaseUrl()
       );
 
       // Create function first

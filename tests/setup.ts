@@ -23,6 +23,46 @@ export const receivedNotifications: Record<string, any[]> = {
   condition_test: []
 };
 
+// Helper to get database URL
+export function getDatabaseUrl(): string {
+  const url = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      'Neither TEST_DATABASE_URL nor DATABASE_URL environment variable is set'
+    );
+  }
+  return url;
+}
+
+// Helper to ensure database is initialized
+export async function ensureDatabase() {
+  if (prisma && pgClient && triggers) {
+    return { prisma, pgClient, triggers };
+  }
+  
+  console.log('Initializing database connection...');
+  const DATABASE_URL = getDatabaseUrl();
+
+  // Initialize if not already done
+  if (!prisma) {
+    prisma = new PrismaClient({
+      adapter: new PrismaPg({
+        connectionString: DATABASE_URL
+      })
+    });
+  }
+
+  if (!pgClient) {
+    pgClient = postgres(DATABASE_URL);
+  }
+
+  if (!triggers) {
+    triggers = createTriggers<typeof prisma>(DATABASE_URL);
+  }
+
+  return { prisma, pgClient, triggers };
+}
+
 // Use direct database connection for tests
 // No pg-testdb required - keep it simple!
 beforeAll(async () => {
@@ -32,43 +72,25 @@ beforeAll(async () => {
   console.log('TEST_DATABASE_URL:', process.env.TEST_DATABASE_URL);
 
   try {
-    // Use environment variables for connection or fallback to defaults
-    const DATABASE_URL =
-      process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
-
-    if (!DATABASE_URL) {
-      throw new Error(
-        'Neither TEST_DATABASE_URL nor DATABASE_URL environment variable is set'
-      );
-    }
+    // Ensure database is initialized
+    await ensureDatabase();
+    
+    const DATABASE_URL = getDatabaseUrl();
 
     console.log('Using database:', DATABASE_URL.replace(/:[^:]+@/, ':****@'));
 
-    // Initialize Prisma client with the same adapter configuration as your app
-    prisma = new PrismaClient({
-      adapter: new PrismaPg({
-        connectionString: DATABASE_URL
-      })
-    });
-
-    // Initialize postgres.js client
-    pgClient = postgres(DATABASE_URL);
-
-    // Initialize triggers client using new API
-    triggers = createTriggers<typeof prisma>(DATABASE_URL);
-
     // Clean up any existing data for a fresh start
     console.log('Cleaning up existing data...');
-    await prisma.item.deleteMany({});
-    await prisma.list.deleteMany({});
-    await prisma.uwU.deleteMany({});
-    await prisma.user.deleteMany({});
+    await prisma!.item.deleteMany({});
+    await prisma!.list.deleteMany({});
+    await prisma!.uwU.deleteMany({});
+    await prisma!.user.deleteMany({});
 
     // Create notification functions for each test type
     console.log('Creating notification functions...');
     
     // Use the transaction API to create functions
-    await triggers.transaction(async (tx) => {
+    await triggers!.transaction(async (tx) => {
       // These functions are already created in individual tests,
       // but we'll create simple versions here for setup
       await tx`
@@ -178,7 +200,7 @@ beforeAll(async () => {
 
     // Check what tables actually exist in the database
     console.log('Checking existing tables...');
-    const tablesResult = await pgClient.unsafe(`
+    const tablesResult = await pgClient!.unsafe(`
       SELECT table_name 
       FROM information_schema.tables 
       WHERE table_schema = 'public'
@@ -212,10 +234,10 @@ afterAll(async () => {
 
     // Clean up any test data
     if (prisma) {
-      await prisma.item.deleteMany({});
-      await prisma.list.deleteMany({});
-      await prisma.uwU.deleteMany({});
-      await prisma.user.deleteMany({});
+      await prisma!.item.deleteMany({});
+      await prisma!.list.deleteMany({});
+      await prisma!.uwU.deleteMany({});
+      await prisma!.user.deleteMany({});
     }
 
     // Dispose triggers
@@ -224,7 +246,7 @@ afterAll(async () => {
     }
 
     // Close connections
-    // if (prisma) await prisma.$disconnect();
+    // if (prisma) await prisma!.$disconnect();
     // if (pgClient) await pgClient.end();
 
     console.log('Test cleanup complete');
