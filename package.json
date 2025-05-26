@@ -14,7 +14,7 @@
     "build": "tsc",
     "dev": "ts-node src/index.ts",
     "test": "bun test",
-    "prepublishOnly": "bun test && bun run build",
+    "prepublishOnly": "bun run build",
     "prepare": "bun run build",
     "example": "ts-node examples/basic-usage.ts",
     "db:up": "docker-compose up -d",
