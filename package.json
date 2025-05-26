@@ -1,6 +1,6 @@
 {
   "name": "pg-typesafe-triggers",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A typesafe client for defining and subscribing to PostgreSQL triggers using Prisma",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
