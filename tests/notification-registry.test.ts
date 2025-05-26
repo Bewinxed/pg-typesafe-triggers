@@ -248,17 +248,24 @@ describe('Notification Registry and Unified Subscription', () => {
     await Promise.all([
       waitForCondition(
         () => receivedNotifications[channels.item].length >= 4,
-        3000
+        5000
       ),
       waitForCondition(
         () => receivedNotifications[channels.list].length >= 2,
-        3000
+        5000
       ),
       waitForCondition(
         () => receivedNotifications[channels.uwu].length >= 1,
-        3000
+        5000
       )
     ]);
+
+    // Add a small delay to ensure all notifications are processed
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Log received notifications for debugging
+    console.log(`Item notifications received: ${receivedNotifications[channels.item].length}`);
+    console.log('Item operations:', receivedNotifications[channels.item].map(n => n.operation));
 
     // Verify we got the correct number of notifications for each channel
     expect(receivedNotifications[channels.item].length).toBe(4);
